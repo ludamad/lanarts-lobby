@@ -2,4 +2,5 @@
 *.hi
 *.swp
 *.swo
+build/
 Connect
