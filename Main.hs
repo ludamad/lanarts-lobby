@@ -1,40 +1,49 @@
--- Following http://www.catonmat.net/blog/simple-haskell-tcp-server/
+-- Loosely based on http://www.catonmat.net/blog/simple-haskell-tcp-server/
 -- and https://github.com/chrisdone/hulk/
 {-# OPTIONS -Wall -fno-warn-missing-signatures -fno-warn-unused-imports #-}
 
-import Network (listenOn, withSocketsDo, accept, Socket, PortID(..))
+import Network (listenOn, withSocketsDo, accept, Socket)
 import System.IO (hSetBuffering, hClose, BufferMode(..), Handle)
 import System.IO.Error (isEOFError)
 import Control.Concurrent (forkIO)
+import Control.Monad (forever)
 
 import qualified Control.Exception as Except
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
-import System.Posix
+import System.Posix as Posix
 
 import Session
 import Message
+import Configuration
+import DBAccess
+
+type ClientConnection = Handle
 
 main :: IO ()
 main = withSocketsDo $ do
-    _ <- installHandler sigPIPE Ignore Nothing
-    sock <- listenOn (PortNumber 6112)
-    sockHandler sock
+    -- Install posix handler to ignore broken pipes
+    _ <- Posix.installHandler Posix.sigPIPE Ignore Nothing
 
-sockHandler :: Socket -> IO ()
-sockHandler sock = do
-    (handle, _, _) <- accept sock
-    hSetBuffering handle NoBuffering
-    _ <- forkIO (commandProcessor handle `Except.catch` errHandler `Except.finally` hClose handle)
-    sockHandler sock -- rinse, repeat
-    where errHandler e 
+    let conf = defaultConfiguration    
+    sock <- listenOn $ serverPort conf 
+
+    forever $ do
+        (conn, _, _) <- accept sock
+        hSetBuffering conn NoBuffering
+        -- Spawn one thread per connection
+        forkIO $ onConnect conf conn
+            `Except.catch` errHandler 
+            `Except.finally` hClose conn
+  where errHandler e 
             | isEOFError e = return()
             | otherwise  = putStrLn (show e) 
 
-commandProcessor :: Handle -> IO ()
-commandProcessor handle = do
-    line <- T.hGetLine handle 
-    T.putStrLn line
-    commandProcessor handle
+onConnect :: Configuration -> ClientConnection -> IO ()
+onConnect conf conn =
+    dbConn <-  
+    forever $ do
+        line <- T.hGetLine conn 
+        T.putStrLn line

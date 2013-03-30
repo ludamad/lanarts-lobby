@@ -38,6 +38,7 @@ getText = getTextOfLen =<< getWord32be
 getTextPair :: Get (T.Text, T.Text)
 getTextPair  = (liftM2 (,)) getText getText
 
+-- Get a parsed message from a stream
 getMessage :: Get Message
 getMessage = do
     msgType <- getWord32be
