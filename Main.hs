@@ -10,6 +10,7 @@ import Control.Monad (forever, void, liftM)
 
 import qualified Control.Exception as Except
 import qualified System.IO.Error as Err
+import GHC.IO.Exception (IOErrorType(ResourceVanished), ioe_type)
 
 import qualified Data.ByteString.Lazy as BSL
 
@@ -64,6 +65,7 @@ main = Net.withSocketsDo $ do
 
   where errHandler e 
             | Err.isEOFError e = return ()
+            | ioe_type e == ResourceVanished = return ()
             | otherwise = putStrLn $ "TEST " ++ (show e)
 
 -- Send broadcast messages to a single client

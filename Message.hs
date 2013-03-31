@@ -21,6 +21,8 @@ import Data.ByteString.Lazy as BSL
 -- Easy JSON conversion is supported by the Aeson library
 import Data.Aeson as JSON
 
+import qualified Control.Exception as Except
+import qualified System.IO.Error as Err
 import System.IO (Handle)
 import Control.Monad
 import Control.Applicative
@@ -61,7 +63,9 @@ sendMessage handle msg = BSL.hPut handle $ runPut $ putMessage msg
 recvBSL :: Handle -> Int -> IO BSL.ByteString
 recvBSL handle size = do
     strictString <- BS.hGet handle size
-    return $ BSL.fromChunks [strictString]
+    if BS.length strictString < size then
+        Except.throwIO $ Err.mkIOError Err.eofErrorType "Messages.hs: Handle was closed." Nothing Nothing
+    else return $ BSL.fromChunks [strictString]
 
 -- Grabs the first 4 bytes to get the message size from a stream
 recvMessageSize :: Handle -> IO (Word32)
