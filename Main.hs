@@ -2,48 +2,57 @@
 -- and https://github.com/chrisdone/hulk/
 {-# OPTIONS -Wall -fno-warn-missing-signatures -fno-warn-unused-imports #-}
 
-import Network (listenOn, withSocketsDo, accept, Socket)
+import qualified Network as Net 
 import System.IO (hSetBuffering, hClose, BufferMode(..), Handle)
-import System.IO.Error (isEOFError)
+
 import Control.Concurrent (forkIO)
 import Control.Monad (forever)
 
 import qualified Control.Exception as Except
+import qualified System.IO.Error as Err
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
-import System.Posix as Posix
+import qualified System.Posix as Posix
 
 import Session
 import Message
 import Configuration
-import DBAccess
+import qualified DBAccess as DB
 
 type ClientConnection = Handle
 
+installSignalHandlers :: Configuration -> IO ()
+installSignalHandlers conf = do
+    ignoreSignal Posix.sigPIPE
+    if handleSigINT conf then ignoreSignal Posix.sigINT else return ()
+  where ignoreSignal pipe = do { _ <- Posix.installHandler pipe Posix.Ignore Nothing ; return () }
+ 
 main :: IO ()
-main = withSocketsDo $ do
-    -- Install posix handler to ignore broken pipes
-    _ <- Posix.installHandler Posix.sigPIPE Ignore Nothing
-
-    let conf = defaultConfiguration    
-    sock <- listenOn $ serverPort conf 
-
-    forever $ do
-        (conn, _, _) <- accept sock
-        hSetBuffering conn NoBuffering
-        -- Spawn one thread per connection
-        forkIO $ onConnect conf conn
+main = Net.withSocketsDo $ do
+    let conf = Configuration.defaultConfiguration    
+    installSignalHandlers conf
+    -- Accept connections on the configured name
+    sock <- Net.listenOn $ serverPort conf
+    forever $ do -- Spawn threads to handle each client
+        (clientConn, _, _) <- Net.accept sock
+        -- Ensure we don't buffer communications since we want real-time behaviour
+        hSetBuffering clientConn NoBuffering
+        -- Connect to MongoDB once per client
+        dbConn <- DB.connectDB (databaseIP conf)
+        forkIO $ onConnect conf dbConn clientConn
             `Except.catch` errHandler 
-            `Except.finally` hClose conn
+            `Except.finally` do { hClose clientConn ; DB.closeDB dbConn }
   where errHandler e 
-            | isEOFError e = return()
+            | Err.isEOFError e = return()
             | otherwise  = putStrLn (show e) 
 
-onConnect :: Configuration -> ClientConnection -> IO ()
-onConnect conf conn =
-    dbConn <-  
+-- Handles IO with a single client
+onConnect :: Configuration -> DB.DBConnection -> ClientConnection -> IO ()
+onConnect conf dbConn clientConn =
     forever $ do
-        line <- T.hGetLine conn 
+        line <- T.hGetLine clientConn
+        _ <- DB.logMessage dbConn (T.pack "User") line 
+        _ <- DB.printMessages dbConn
         T.putStrLn line

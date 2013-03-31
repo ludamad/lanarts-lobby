@@ -1,5 +1,3 @@
--- Following http://www.catonmat.net/blog/simple-haskell-tcp-server/
--- and https://github.com/chrisdone/hulk/
 {-# OPTIONS -Wall -fno-warn-missing-signatures -fno-warn-unused-imports #-}
 
 import Network (withSocketsDo, connectTo, PortID(..), Socket)
@@ -12,11 +10,13 @@ import System.Posix
 
 import Session
 import Message
+import Configuration
 
 main :: IO ()
 main = withSocketsDo $ do
     _ <- installHandler sigPIPE Ignore Nothing
-    handle <- connectTo "localhost" (PortNumber 6112)
+    let conf = Configuration.defaultConfiguration
+    handle <- connectTo "localhost" (serverPort conf)
     talkToServer handle `Except.catch` errHandler `Except.finally` hClose handle
     where errHandler e 
             | isEOFError e = return()

@@ -2,16 +2,18 @@
 
 module Configuration where
 
-import Data.Text as T
-import Network (PortID(..))
+import qualified Data.Text as T
+import qualified Network as Net 
 
 data Configuration = Configuration {
         databaseIP :: T.Text
-        ,serverPort :: PortID
+        ,serverPort :: Net.PortID
+        ,handleSigINT :: Bool
 }
 
 defaultConfiguration :: Configuration
 defaultConfiguration = Configuration { 
     databaseIP = T.pack "localhost"
-    ,serverPort = PortNumber 6113
+    ,serverPort = Net.PortNumber 6113
+    ,handleSigINT = False -- Should be true before deploying
 }
