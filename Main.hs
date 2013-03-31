@@ -11,6 +11,8 @@ import Control.Monad (forever, void, liftM)
 import qualified Control.Exception as Except
 import qualified System.IO.Error as Err
 
+import qualified Data.ByteString.Lazy as BSL
+
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
@@ -23,8 +25,9 @@ import Configuration
 import qualified DBAccess as DB
 
 type ClientConnection = Handle
-type MessageQueue = Chan T.Text
+type MessageQueue = Chan Message
 
+-- For robustness, we should ignore certain signals
 installSignalHandlers :: Configuration -> IO ()
 installSignalHandlers conf = do
     ignoreSignal Posix.sigPIPE
@@ -35,38 +38,47 @@ main :: IO ()
 main = Net.withSocketsDo $ do
     let conf = Configuration.defaultConfiguration    
     installSignalHandlers conf
+
     -- Accept connections on the configured name
     sock <- Net.listenOn $ serverPort conf
-    rootMsgQueue <- newIORef =<< newChan
+    -- Create a channel that can be listened to for broadcast messages
+    rootMsgQueue <- newIORef =<< newChan 
+
     forever $ do -- Spawn threads to handle each client
         (clientConn, _, _) <- Net.accept sock
+
         -- Ensure we don't buffer communications since we want real-time behaviour
         hSetBuffering clientConn NoBuffering
+
         -- Connect to MongoDB once per client
         dbConn <- DB.connectDB (databaseIP conf)
-        -- Each client has a list of messages that are awaiting sending
-        msgQueue <- dupChan =<< (readIORef rootMsgQueue)
+        msgQueue <- dupChan =<< (readIORef rootMsgQueue) -- dupChan is misleading, essentially we create another listener for the channel
         writeIORef rootMsgQueue msgQueue -- Ensures we don't leak memory! We don't want to hold onto a growing but not consumed channel.
-        writerThreadID <- forkIO $ writerThread conf msgQueue dbConn clientConn
+
+        writerThreadID <- forkIO $ writerThread conf msgQueue dbConn clientConn -- Writer thread
             `Except.catch` errHandler 
-        forkIO $ readerThread conf msgQueue dbConn clientConn
+
+        forkIO $ readerThread conf msgQueue dbConn clientConn -- Reader thread
             `Except.catch` errHandler 
             `Except.finally` do { killThread writerThreadID ; hClose clientConn ; DB.closeDB dbConn }
+
   where errHandler e 
             | Err.isEOFError e = return ()
-            | otherwise = putStrLn (show e) 
+            | otherwise = putStrLn $ "TEST " ++ (show e)
 
+-- Send broadcast messages to a single client
 writerThread :: Configuration -> MessageQueue -> DB.DBConnection -> ClientConnection -> IO ()
 writerThread conf msgQueue dbConn clientConn =
     forever $ do
         msg <- readChan msgQueue
-        T.hPutStrLn clientConn msg
+        sendMessage clientConn msg
 
+-- Parse and handle messages from a single client
 readerThread :: Configuration -> MessageQueue -> DB.DBConnection -> ClientConnection -> IO ()
 readerThread conf msgQueue dbConn clientConn =
     forever $ do
-        line <- T.hGetLine clientConn
-        _ <- DB.logMessage dbConn (T.pack "User") line
-        queueBroadcastMessage line
-        T.putStrLn line
+        maybeMsg <- recvMessage clientConn
+        case maybeMsg of
+            Just msg -> do { queueBroadcastMessage msg ; print msg }
+            Nothing -> error "Ill-formatted message!!"
   where queueBroadcastMessage = writeChan msgQueue

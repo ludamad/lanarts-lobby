@@ -1,4 +1,5 @@
 {-# OPTIONS -Wall -fno-warn-missing-signatures -fno-warn-unused-imports #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 import Network (withSocketsDo, connectTo, PortID(..), Socket)
 import System.IO (hSetBuffering, hPutStrLn, hClose, BufferMode(..), Handle)
@@ -23,4 +24,4 @@ main = withSocketsDo $ do
             | otherwise  = putStrLn (show e) 
 
 talkToServer :: Handle -> IO ()
-talkToServer handle = hPutStrLn handle "Hello World!"
+talkToServer handle = sendMessage handle (ChatMessage "Hello World!")

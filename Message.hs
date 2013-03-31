@@ -1,73 +1,75 @@
-{-# OPTIONS -Wall -fno-warn-missing-signatures -fno-warn-unused-imports #-}
+{-# OPTIONS -Wall -fno-warn-missing-signatures #-}
+
+-- While generally I wanted to avoid language extensions, 
+-- overloaded strings makes string literals passable as any string type (not just String).
+-- The amount of boilerplate this saves was deemed worth it.
+{-# LANGUAGE OverloadedStrings #-}
 
 module Message (
-        Message
-        ,loginMessageID
-        ,createUserMessageID
-        ,chatMessageID
-        ,putText
-        ,putMessage
-        ,getTextOfLen
-        ,getText
-        ,getMessage
+        Message(..)
+        ,sendMessage
+        ,recvMessage
     ) where
 
+import Data.Word
 -- The Get monad allows one to encapsulate deserialization as a series of actions
 import Data.Binary.Get
 -- The Put monad allows one to encapsulate serialization as a series of actions
 import Data.Binary.Put
-import Control.Monad
 import Data.ByteString as BS
+import Data.ByteString.Lazy as BSL
+-- Easy JSON conversion is supported by the Aeson library
+import Data.Aeson as JSON
+
+import System.IO (Handle)
+import Control.Monad
+import Control.Applicative
 
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
 
 -- Represents a parsed message to be handled by the server
 data Message = LoginMessage { username :: T.Text, password :: T.Text }
             | CreateUserMessage { username :: T.Text, password :: T.Text }
-            | ChatMessage { message :: T.Text }
+            | ChatMessage { message :: T.Text } deriving (Show)
 
-loginMessageID = 0
-createUserMessageID = 1
-chatMessageID = 2
+instance JSON.FromJSON Message where
+    parseJSON (JSON.Object jsObject) = do 
+        msgType <- jsObject .: "type"
+        case msgType :: T.Text of
+                "LoginMessage" -> LoginMessage <$> jsObject .: "username" <*> jsObject .: "password"
+                "CreateUserMessage" -> CreateUserMessage <$> jsObject .: "username" <*> jsObject .: "password"
+                "ChatMessage" -> ChatMessage <$> jsObject .: "message"
+                _ -> mzero -- Fail
+    parseJSON _ = mzero -- Fail
 
--- Put text onto a stream
-putText :: T.Text -> Put 
-putText text = do
-    let byteString = T.encodeUtf8 text
-    putWord32be $ fromIntegral $ BS.length byteString
-    putByteString byteString
+instance JSON.ToJSON Message where
+     toJSON (LoginMessage u p) = JSON.object ["type" .= ("LoginMessage" :: T.Text), "username" .= u, "password" .= p]
+     toJSON (CreateUserMessage u p) = JSON.object ["type" .= ("CreateUserMessage" :: T.Text), "username" .= u, "password" .= p]
+     toJSON (ChatMessage msg) = JSON.object ["type" .= ("ChatMessage" :: T.Text), "message" .= msg]
 
--- Get text of a specified length from a stream
-getTextOfLen :: Integral a => a -> Get T.Text
-getTextOfLen len = liftM T.decodeUtf8 $ getByteString (fromIntegral len) 
-
--- First get the text size, and get text of that length from a stream
-getText :: Get T.Text
-getText = getTextOfLen =<< getWord32be
-
--- Get a textual pair from a stream
-getTextPair :: Get (T.Text, T.Text)
-getTextPair  = (liftM2 (,)) getText getText
+putMessage :: Message -> Put
+putMessage msg = do
+    let byteString = JSON.encode msg
+    putWord32be $ fromIntegral (BSL.length byteString)
+    putLazyByteString byteString
 
 -- Put a message onto a stream
-putMessage :: Message -> Put
-putMessage (LoginMessage u p) = putWord32be loginMessageID >> putText u >> putText p
-putMessage (CreateUserMessage u p) = putWord32be createUserMessageID >> putText u >> putText p
-putMessage (ChatMessage msg) = putWord32be chatMessageID >> putText msg
+sendMessage :: Handle -> Message -> IO ()
+sendMessage handle msg = BSL.hPut handle $ runPut $ putMessage msg
 
--- Get a parsed message from a stream
-getMessage :: Get Message
-getMessage = do
-    msgType <- getWord32be
-    if msgType == loginMessageID then do
-            (user, pass) <- getTextPair
-            return LoginMessage { username = user, password = pass }
-    else if msgType == createUserMessageID then do
-            (user, pass) <- getTextPair
-            return CreateUserMessage { username = user, password = pass }
-    else if msgType == chatMessageID then do
-            msg <- getText
-            return ChatMessage { message = msg }
-    else error $ "Unknown message type: " ++ (show msgType)
+-- Grabs a certain number of bytes, coerced into a lazy string for use with Aeson
+recvBSL :: Handle -> Int -> IO BSL.ByteString
+recvBSL handle size = do
+    strictString <- BS.hGet handle size
+    return $ BSL.fromChunks [strictString]
+
+-- Grabs the first 4 bytes to get the message size from a stream
+recvMessageSize :: Handle -> IO (Word32)
+recvMessageSize handle = liftM (runGet getWord32be) $ recvBSL handle 4
+
+-- Get a message from a stream
+recvMessage :: Handle -> IO (Maybe Message) 
+recvMessage handle = do
+    size <- recvMessageSize handle
+    liftM JSON.decode $ recvBSL handle (fromIntegral size)
 
