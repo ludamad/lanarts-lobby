@@ -5,6 +5,8 @@ module Message (
         ,loginMessageID
         ,createUserMessageID
         ,chatMessageID
+        ,putText
+        ,putMessage
         ,getTextOfLen
         ,getText
         ,getMessage
@@ -12,7 +14,10 @@ module Message (
 
 -- The Get monad allows one to encapsulate deserialization as a series of actions
 import Data.Binary.Get
+-- The Put monad allows one to encapsulate serialization as a series of actions
+import Data.Binary.Put
 import Control.Monad
+import Data.ByteString as BS
 
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -26,6 +31,13 @@ loginMessageID = 0
 createUserMessageID = 1
 chatMessageID = 2
 
+-- Put text onto a stream
+putText :: T.Text -> Put 
+putText text = do
+    let byteString = T.encodeUtf8 text
+    putWord32be $ fromIntegral $ BS.length byteString
+    putByteString byteString
+
 -- Get text of a specified length from a stream
 getTextOfLen :: Integral a => a -> Get T.Text
 getTextOfLen len = liftM T.decodeUtf8 $ getByteString (fromIntegral len) 
@@ -37,6 +49,12 @@ getText = getTextOfLen =<< getWord32be
 -- Get a textual pair from a stream
 getTextPair :: Get (T.Text, T.Text)
 getTextPair  = (liftM2 (,)) getText getText
+
+-- Put a message onto a stream
+putMessage :: Message -> Put
+putMessage (LoginMessage u p) = putWord32be loginMessageID >> putText u >> putText p
+putMessage (CreateUserMessage u p) = putWord32be createUserMessageID >> putText u >> putText p
+putMessage (ChatMessage msg) = putWord32be chatMessageID >> putText msg
 
 -- Get a parsed message from a stream
 getMessage :: Get Message
@@ -52,3 +70,4 @@ getMessage = do
             msg <- getText
             return ChatMessage { message = msg }
     else error $ "Unknown message type: " ++ (show msgType)
+
