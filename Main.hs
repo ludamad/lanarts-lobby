@@ -61,12 +61,12 @@ main = Net.withSocketsDo $ do
 
         forkIO $ readerThread conf msgQueue dbConn clientConn -- Reader thread
             `Except.catch` errHandler 
-            `Except.finally` do { killThread writerThreadID ; hClose clientConn ; DB.closeDB dbConn }
+            `Except.finally` do { killThread writerThreadID ; hClose clientConn `Except.catch` errHandler; DB.closeDB dbConn }
 
   where errHandler e 
             | Err.isEOFError e = return ()
             | ioe_type e == ResourceVanished = return ()
-            | otherwise = putStrLn $ "TEST " ++ (show e)
+            | otherwise = putStrLn $ "UNCAUGHT EXCEPTION " ++ (show e)
 
 -- Send broadcast messages to a single client
 writerThread :: Configuration -> MessageQueue -> DB.DBConnection -> ClientConnection -> IO ()
@@ -79,8 +79,9 @@ writerThread conf msgQueue dbConn clientConn =
 readerThread :: Configuration -> MessageQueue -> DB.DBConnection -> ClientConnection -> IO ()
 readerThread conf msgQueue dbConn clientConn =
     forever $ do
+        DB.printMessages dbConn 
         maybeMsg <- recvMessage clientConn
         case maybeMsg of
-            Just msg -> do { queueBroadcastMessage msg ; print msg }
-            Nothing -> error "Ill-formatted message!!"
+            Just msg -> do { queueBroadcastMessage msg ; dbStoreMessage dbConn msg }
+            Nothing -> error "FATAL ERROR in Main.hs: Ill-formatted message!"
   where queueBroadcastMessage = writeChan msgQueue

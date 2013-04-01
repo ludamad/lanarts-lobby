@@ -9,6 +9,7 @@ module Message (
         Message(..)
         ,sendMessage
         ,recvMessage
+        ,dbStoreMessage
     ) where
 
 import Data.Word
@@ -27,6 +28,7 @@ import System.IO (Handle)
 import Control.Monad
 import Control.Applicative
 
+import qualified DBAccess as DB
 import qualified Data.Text as T
 
 -- Represents a parsed message to be handled by the server
@@ -77,3 +79,7 @@ recvMessage handle = do
     size <- recvMessageSize handle
     liftM JSON.decode $ recvBSL handle (fromIntegral size)
 
+dbStoreMessage :: DB.DBConnection -> Message -> IO ()
+dbStoreMessage dbConn msg = do
+    doc <- DB.prependTimeStamp $ DB.toDocument msg
+    void $ DB.dbStore dbConn "messages" doc
