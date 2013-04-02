@@ -34,7 +34,9 @@ import qualified Data.Text as T
 -- Represents a parsed message to be handled by the server
 data Message = LoginMessage { username :: T.Text, password :: T.Text }
             | CreateUserMessage { username :: T.Text, password :: T.Text }
-            | ChatMessage { message :: T.Text } deriving (Show)
+            | ChatMessage { username :: T.Text, message :: T.Text }
+            | ServerMessage { context :: T.Text, message :: T.Text }
+                deriving (Show)
 
 instance JSON.FromJSON Message where
     parseJSON (JSON.Object jsObject) = do 
@@ -42,14 +44,16 @@ instance JSON.FromJSON Message where
         case msgType :: T.Text of
                 "LoginMessage" -> LoginMessage <$> jsObject .: "username" <*> jsObject .: "password"
                 "CreateUserMessage" -> CreateUserMessage <$> jsObject .: "username" <*> jsObject .: "password"
-                "ChatMessage" -> ChatMessage <$> jsObject .: "message"
+                "ChatMessage" -> ChatMessage <$> jsObject .: "username" <*> jsObject .: "message"
+                "ServerMessage" -> ServerMessage <$> jsObject .: "context" <*> jsObject .: "message"
                 _ -> mzero -- Fail
     parseJSON _ = mzero -- Fail
 
 instance JSON.ToJSON Message where
      toJSON (LoginMessage u p) = JSON.object ["type" .= ("LoginMessage" :: T.Text), "username" .= u, "password" .= p]
      toJSON (CreateUserMessage u p) = JSON.object ["type" .= ("CreateUserMessage" :: T.Text), "username" .= u, "password" .= p]
-     toJSON (ChatMessage msg) = JSON.object ["type" .= ("ChatMessage" :: T.Text), "message" .= msg]
+     toJSON (ChatMessage u msg) = JSON.object ["type" .= ("ChatMessage" :: T.Text), "username" .= u, "message" .= msg]
+     toJSON (ServerMessage cntxt msg) = JSON.object ["type" .= ("ServerMessage" :: T.Text), "context" .= cntxt, "message" .= msg]
 
 putMessage :: Message -> Put
 putMessage msg = do
@@ -74,10 +78,13 @@ recvMessageSize :: Handle -> IO (Word32)
 recvMessageSize handle = liftM (runGet getWord32be) $ recvBSL handle 4
 
 -- Get a message from a stream
-recvMessage :: Handle -> IO (Maybe Message) 
+recvMessage :: Handle -> IO Message 
 recvMessage handle = do
     size <- recvMessageSize handle
-    liftM JSON.decode $ recvBSL handle (fromIntegral size)
+    maybeMsg <- liftM JSON.decode $ recvBSL handle (fromIntegral size)
+    case maybeMsg of
+        Just msg -> return msg
+        Nothing -> Except.throwIO $ Err.mkIOError Err.userErrorType "Messages.hs: Invalidly formmated message." Nothing Nothing
 
 dbStoreMessage :: DB.DBConnection -> Message -> IO ()
 dbStoreMessage dbConn msg = do
