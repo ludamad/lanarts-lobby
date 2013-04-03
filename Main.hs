@@ -8,6 +8,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import qualified Network as Net 
+import qualified Network.Socket as NetSock
+
 import System.IO (hSetBuffering, hClose, BufferMode(..), Handle)
 
 import Control.Concurrent (forkIO, MVar, Chan, writeChan, dupChan, readChan, newChan, killThread)
@@ -42,23 +44,39 @@ installSignalHandlers conf = do
     if handleSigINT conf then ignoreSignal Posix.sigINT else return ()
   where ignoreSignal pipe = void $ Posix.installHandler pipe Posix.Ignore Nothing
 
+-- Bunch of socket boilerplate mostly copied from Network.listenOn
+mkServerSocket :: NetSock.HostName -> NetSock.PortNumber -> IO NetSock.Socket
+mkServerSocket hostName port = do
+    sock <- NetSock.socket NetSock.AF_INET NetSock.Stream 6 -- 6 == TCP 
+    NetSock.setSocketOption sock NetSock.ReuseAddr 1
+    addr <- NetSock.inet_addr hostName
+    NetSock.bindSocket sock (NetSock.SockAddrInet port addr)
+    NetSock.listen sock NetSock.maxListenQueue
+    return sock
+
 main :: IO ()
 main = Net.withSocketsDo $ do
-    let conf = Configuration.defaultConfiguration    
+    putStrLn "Lanarts lobby server starting ..."
+    conf <- Configuration.getConfiguration
     installSignalHandlers conf
 
+    putStrLn $ "Creating socket on " ++ (show $ serverPort conf)
     -- Accept connections on the configured name
-    sock <- Net.listenOn $ serverPort conf
+    sock <- mkServerSocket (serverHostAddr conf) (serverPort conf)
+ 
     -- Create a channel that can be listened to for broadcast messages
     rootMsgQueue <- newIORef =<< newChan 
 
     forever $ do -- Spawn threads to handle each client
         (clientConn, _, _) <- Net.accept sock
 
+        putStrLn "New client has connected." 
+
         -- Ensure we don't buffer communications since we want real-time behaviour
         hSetBuffering clientConn NoBuffering
 
         -- Connect to MongoDB once per client
+        putStrLn $ "Connecting to MongoDB @ " ++ (T.unpack $ databaseIP conf)
         dbConn <- DB.connectDB (databaseIP conf)
         msgQueue <- dupChan =<< (readIORef rootMsgQueue) -- dupChan is misleading, essentially we create another listener for the channel
         writeIORef rootMsgQueue msgQueue -- Ensures we don't leak memory! We don't want to hold onto a growing but not consumed channel.
@@ -68,7 +86,12 @@ main = Net.withSocketsDo $ do
 
         forkIO $ readerThread conf msgQueue dbConn clientConn -- Reader thread
             `Except.catch` errHandler 
-            `Except.finally` do { killThread writerThreadID ; hClose clientConn `Except.catch` errHandler; DB.closeDB dbConn }
+            `Except.finally` do { 
+                killThread writerThreadID ;
+                hClose clientConn `Except.catch` errHandler ; 
+                DB.closeDB dbConn  ;
+                putStrLn "A client has closed its connection." ;
+            }
 
   where errHandler e 
             | Err.isEOFError e = return ()

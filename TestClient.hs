@@ -17,8 +17,8 @@ import Configuration
 main :: IO ()
 main = withSocketsDo $ do
     _ <- installHandler sigPIPE Ignore Nothing
-    let conf = Configuration.defaultConfiguration
-    handle <- connectTo "localhost" (serverPort conf)
+    conf <- Configuration.getConfiguration
+    handle <- connectTo "lobby-lanarts.rhcloud.com" (PortNumber $ 80)
     loginToServer handle `Except.catch` errHandler `Except.finally` hClose handle
     where errHandler e 
             | isEOFError e = return()
