@@ -1,5 +1,3 @@
--- Loosely based on http://www.catonmat.net/blog/simple-haskell-tcp-server/
--- and https://github.com/chrisdone/hulk/
 {-# OPTIONS -Wall -fno-warn-missing-signatures -fno-warn-unused-imports #-}
 
 -- While generally I wanted to avoid language extensions, 
@@ -7,35 +5,37 @@
 -- The amount of boilerplate this saves was deemed worth it.
 {-# LANGUAGE OverloadedStrings #-}
 
-import qualified Network as Net 
-import qualified Network.Socket as NetSock
+import qualified Network.Wai as Web
+import qualified Network.HTTP.Types as HTTP
+import qualified Network.Wai.Handler.Warp as Warp
+import qualified Data.Aeson as JSON
 
-import System.IO (hSetBuffering, hClose, BufferMode(..), Handle)
-
-import Control.Concurrent (forkIO, MVar, Chan, writeChan, dupChan, readChan, newChan, killThread)
-import Control.Monad (forever, void, liftM)
-
-import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Control.Exception as Except
+import qualified System.Posix as Posix
 import qualified System.IO.Error as Err
-import GHC.IO.Exception (IOErrorType(ResourceVanished), ioe_type)
 
-import qualified Data.ByteString.Lazy as BSL
-
+import qualified Data.ByteString as B
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Data.Text.IO as T
 
-import Data.IORef
-import qualified System.Posix as Posix
+import Data.Conduit.Attoparsec (sinkParser)
 
-import UserStats
-import Message
-import Configuration
+import qualified Data.Conduit.List as CL
+import Data.Conduit (ResourceT, ($$), Sink)
+
+import Control.Monad.Trans.Resource (ResourceT)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad (void) 
+import System.Environment (getArgs)
+
 import qualified DBAccess as DB
+import Configuration
+import Message
 
-type ClientConnection = Handle
-type MessageQueue = Chan Message
+data AppState = AppState {
+    appConf :: Configuration
+    , appConnPool :: DB.DBConnectionPool
+}
 
 -- For robustness, we should ignore certain signals
 installSignalHandlers :: Configuration -> IO ()
@@ -44,99 +44,30 @@ installSignalHandlers conf = do
     if handleSigINT conf then ignoreSignal Posix.sigINT else return ()
   where ignoreSignal pipe = void $ Posix.installHandler pipe Posix.Ignore Nothing
 
--- Bunch of socket boilerplate mostly copied from Network.listenOn
-mkServerSocket :: NetSock.HostName -> NetSock.PortNumber -> IO NetSock.Socket
-mkServerSocket hostName port = do
-    sock <- NetSock.socket NetSock.AF_INET NetSock.Stream 6 -- 6 == TCP 
-    NetSock.setSocketOption sock NetSock.ReuseAddr 1
-    addr <- NetSock.inet_addr hostName
-    NetSock.bindSocket sock (NetSock.SockAddrInet port addr)
-    NetSock.listen sock NetSock.maxListenQueue
-    return sock
+application :: AppState ->  Web.Request -> ResourceT IO Web.Response
+application appState request = do
+    parseResult <- Web.requestBody request $$ sinkParser (fmap JSON.fromJSON JSON.json)
+    message <- liftIO $ handleMessage parseResult
+    return $ Web.responseLBS HTTP.status200 [("Content-Type", "application/json")] $ JSON.encode message
+
+handleMessage :: JSON.Result Message -> IO Message
+handleMessage (JSON.Error str) = Except.throwIO (Err.mkIOError Err.userErrorType str Nothing Nothing) 
+handleMessage (JSON.Success msg) = return msg
+
+setUpDB :: AppState -> IO ()
+setUpDB appState = do
+    conn <- DB.getDBConnection $ appConnPool appState
+    DB.dbEval conn evalString 
+  where
+    timeOut = sessionTimeOut (appConf appState) 
+    evalString = T.concat [ "db.sessions.ensureIndex({ \"userID\": 1, \"status\": 1 }, { \"expireAfterSeconds\": ", T.pack (show timeOut)," } )" ]
 
 main :: IO ()
-main = Net.withSocketsDo $ do
-    putStrLn "Lanarts lobby server starting ..."
-    conf <- Configuration.getConfiguration
+main = do 
+    conf <- fmap Configuration.parseConfiguration getArgs
     installSignalHandlers conf
-
-    putStrLn $ "Creating socket on " ++ (show $ serverPort conf)
-    -- Accept connections on the configured name
-    sock <- mkServerSocket (serverHostAddr conf) (serverPort conf)
- 
-    -- Create a channel that can be listened to for broadcast messages
-    rootMsgQueue <- newIORef =<< newChan 
-
-    forever $ do -- Spawn threads to handle each client
-        (clientConn, _, _) <- Net.accept sock
-
-        putStrLn "New client has connected." 
-
-        -- Ensure we don't buffer communications since we want real-time behaviour
-        hSetBuffering clientConn NoBuffering
-
-        -- Connect to MongoDB once per client
-        putStrLn $ "Connecting to MongoDB @ " ++ (T.unpack $ databaseIP conf)
-        dbConn <- DB.connectDB (databaseIP conf)
-        msgQueue <- dupChan =<< (readIORef rootMsgQueue) -- dupChan is misleading, essentially we create another listener for the channel
-        writeIORef rootMsgQueue msgQueue -- Ensures we don't leak memory! We don't want to hold onto a growing but not consumed channel.
-
-        writerThreadID <- forkIO $ writerThread conf msgQueue dbConn clientConn -- Writer thread
-            `Except.catch` errHandler 
-
-        forkIO $ readerThread conf msgQueue dbConn clientConn -- Reader thread
-            `Except.catch` errHandler 
-            `Except.finally` do { 
-                killThread writerThreadID ;
-                hClose clientConn `Except.catch` errHandler ; 
-                DB.closeDB dbConn  ;
-                putStrLn "A client has closed its connection." ;
-            }
-
-  where errHandler e 
-            | Err.isEOFError e = return ()
-            | ioe_type e == ResourceVanished = return ()
-            | otherwise = putStrLn $ "UNCAUGHT EXCEPTION " ++ (show e)
-
--- Send broadcast messages to a single client
--- We listen to the channel for incoming messages.
--- Note channels are one-write interface multiple-read interfaces, so in essence each thread sees its own queue
-writerThread :: Configuration -> MessageQueue -> DB.DBConnection -> ClientConnection -> IO ()
-writerThread conf msgQueue dbConn clientConn =
-    forever $ do
-        msg <- readChan msgQueue
-        sendMessage clientConn msg
-
--- Parse and handle messages from a single client
-readerThread :: Configuration -> MessageQueue -> DB.DBConnection -> ClientConnection -> IO ()
-readerThread conf msgQueue dbConn clientConn = do
-    -- Expect a user connection or user creation message first
-    user <- authenticateUser =<< recvMessage clientConn
-    if user == nullUser then return ()
-    else forever $ do
-        msg <- recvMessage clientConn
-        queueBroadcastMessage msg
-        dbStoreMessage dbConn msg
-
-  where queueBroadcastMessage = writeChan msgQueue
-        authenticateUser (LoginMessage u p) = do
-            maybeUser <- dbAuthenticateUser dbConn u (SHA256.hash $ T.encodeUtf8 p)
-            case maybeUser of
-                Just user -> do 
-                    sendMessage clientConn (ServerMessage "LoginSuccess" (T.concat ["Successfully logged in as ", u, "!"]) )
-                    return user
-                Nothing -> do
-                    sendMessage clientConn (ServerMessage "LoginFailure" "Problem logging in: Bad username or password!")
-                    return nullUser
-        authenticateUser (CreateUserMessage u p) = do
-            maybeUser <- dbCreateUser dbConn u (SHA256.hash $ T.encodeUtf8 p)
-            case maybeUser of
-                Just user -> do
-                    sendMessage clientConn (ServerMessage "LoginSuccess" (T.concat ["Successfully created and logged in as ", u, "!"]) )
-                    return user
-                Nothing -> do
-                    sendMessage clientConn (ServerMessage "LoginFailure" (T.concat ["Problem creating the user ", u, "!"]))
-                    return nullUser
-        authenticateUser _ = do
-            sendMessage clientConn (ServerMessage "ProtocolFailure" "Bad message recieved, expected LoginMessage or CreateUserMessage!")
-            return nullUser
+    connPool <- DB.newDBConnectionPool (databaseIP conf) (dbConnections conf) 
+    let appState = AppState conf connPool
+    let warpSettings = Warp.defaultSettings { Warp.settingsPort = serverPort conf, Warp.settingsHost = Warp.Host $ serverHostAddr conf }
+    setUpDB appState
+    Warp.runSettings warpSettings (application appState)

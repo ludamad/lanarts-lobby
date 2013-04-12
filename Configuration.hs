@@ -2,26 +2,24 @@
 
 module Configuration where
 
-import System.Environment (getArgs)
-import qualified Data.Text as T
-import qualified Network.Socket as NetSock
-
 data Configuration = Configuration {
-        databaseIP :: T.Text
-        , serverHostAddr :: NetSock.HostName
-        , serverPort :: NetSock.PortNumber
+        databaseIP :: String
+        , serverHostAddr :: String
+        , serverPort :: Int
         , handleSigINT :: Bool
+        , dbConnections :: Int
+        , sessionTimeOut :: Int -- in seconds
 }
 
-getConfiguration :: IO Configuration
-getConfiguration = do
-    args <- getArgs
-    let port = if length args > 0 then read (args !! 0) else (6112::Int)
-    let hostAddr = if length args > 1 then args !! 1 else "0.0.0.0"
-    let dbIP = if length args > 2 then args !! 2 else "localhost"
-    return Configuration { 
-        databaseIP = T.pack dbIP
-        , serverHostAddr = hostAddr
-        , serverPort = NetSock.PortNum . fromIntegral . NetSock.PortNum . fromIntegral $ port -- Get around a 'widely considered misdesigned' byteswap
+parseConfiguration :: [String] -> Configuration
+parseConfiguration args = Configuration { 
+        databaseIP =
+            if length args > 2 then args !! 2 else "localhost"
+        , serverHostAddr = 
+            if length args > 1 then args !! 1 else "0.0.0.0"
+        , serverPort = 
+            if length args > 0 then read (args !! 0) else (8080::Int)
         , handleSigINT = False -- Should be true before deploying
+        , dbConnections = 10
+        , sessionTimeOut = 60*3 -- session is held for 3 minutes by default
     }

@@ -6,7 +6,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module UserStats (
-    toDocument
+    User
+    , toDocument
     , nullUser
     , fromDocument
     , dbAuthenticateUser
@@ -31,18 +32,16 @@ data User = User {
 } deriving (Show, Eq)
 
 -- Represents an invalid user. We could use a Maybe type to represent this, but it would be tedious in the common case.
+-- TODO: I'm not sure if this is required anymore
 nullUser :: User
 nullUser = User { userId = Oid 0 0, username = "", passwordHash = "" } 
 
 -- Find a user with the given username
 dbFindUser :: DB.DBConnection -> T.Text -> IO (Maybe User)
 dbFindUser dbConn name = do
-    maybeUser <- DB.dbFindOne dbConn "users" [ "username" =: name ]
-    case maybeUser of 
-        Just user -> return $ Just (fromDocument user)
-        Nothing -> return Nothing 
+    maybeDoc <- DB.dbFindOne dbConn "users" [ "username" =: name ]
+    return $ fromDocument `fmap` maybeDoc
 
--- Find a user with the given username
 dbPrintUsers :: DB.DBConnection -> IO ()
 dbPrintUsers dbConn = do
     users <- DB.dbFindTakeN dbConn "users" [] 20
@@ -52,9 +51,8 @@ dbPrintUsers dbConn = do
 dbAuthenticateUser :: DB.DBConnection -> T.Text -> SHA256Hash -> IO (Maybe User)
 dbAuthenticateUser dbConn name passHash = do
     maybeUser <- dbFindUser dbConn name
-    case maybeUser of
-        Just user -> return $ if passwordHash user == passHash then Just user else Nothing
-        Nothing -> return Nothing
+    return $ authenticate =<< maybeUser
+  where authenticate user = if passwordHash user == passHash then Just user else Nothing
  
 -- Convert to a MongoDB object. Includes everything except the ObjectId,
 -- because we must not pass an ObjectId on initial creation.

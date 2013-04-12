@@ -8,11 +8,19 @@
 -- The amount of boilerplate this saves was deemed worth it.
 {-# LANGUAGE OverloadedStrings #-} 
 
+-- Flexible instances allows us to detect types that are both FromJSON and ToJSON and make them DBStorable.
+{-# LANGUAGE FlexibleInstances, UndecidableInstances #-}
+
 module DBAccess (
     DBConnection
+    , DBStorable 
+    , DBConnectionPool
     , connectDB
+    , newDBConnectionPool
+    , getDBConnection
     , closeDB
     , docLookUp
+    , dbEval
     , dbStore
     , dbUpdate
     , dbFind
@@ -37,13 +45,36 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Time as Time
 import qualified Control.Exception as Except
+
 import qualified System.IO.Error as Err
-import Control.Monad (liftM)
+import qualified System.IO.Pool as P
+
+import Control.Monad (liftM, void)
+
+class DBStorable a where
+   toDocument :: a -> Document
+   fromDocument :: Document -> Maybe a
+
+instance (JSON.ToJSON a, JSON.FromJSON a) => DBStorable a where
+    toDocument = valueToDoc . JSON.toJSON
+      where valueToDoc (JSON.Object v) = AB.bsonify v
+            valueToDoc _ = error "DBAccess.dbStore API error: requires object value" -- Partial functions are icky and unhaskelly, but there's no better way
+    fromDocument doc = result2maybe $ JSON.fromJSON $ JSON.Object (AB.aesonify doc)
+      where result2maybe (JSON.Error str) = Except.throw (Err.mkIOError Err.userErrorType str Nothing Nothing)
+            result2maybe (JSON.Success v) = Just v
 
 type DBConnection = MDB.Pipe
+type DBConnectionPool = P.Pool Err.IOError DBConnection
+
+newDBConnectionPool :: String -> Int -> IO DBConnectionPool 
+newDBConnectionPool hostName amount = P.newPool connFactory amount
+  where connFactory = P.Factory { P.newResource = MDB.connect $ MDB.host hostName, P.killResource = MDB.close, P.isExpired = MDB.isClosed }
+
+getDBConnection :: DBConnectionPool -> IO DBConnection
+getDBConnection = MDB.runIOE . P.aResource
 
 connectDB :: T.Text -> IO DBConnection
-connectDB hostName = MDB.runIOE $ MDB.connect $ host (T.unpack hostName)
+connectDB hostName = MDB.runIOE $ MDB.connect $ MDB.host (T.unpack hostName)
 
 closeDB :: DBConnection -> IO ()
 closeDB = MDB.close
@@ -66,16 +97,16 @@ dbStore dbConn collection document = withDBDo dbConn $ MDB.insert collection doc
 -- Convert an arbitrary value into a MongoDB object that we can store
 -- It must implement the ToJSON typeclass
 -- This relies on a helper library for converting Aeson's between format and MongoDB's format for JSON
-toDocument :: JSON.ToJSON value => value -> MDB.Document
-toDocument = valueToDoc . JSON.toJSON
-  where valueToDoc (JSON.Object v) = AB.bsonify v
-        valueToDoc _ = error "DBAccess.dbStore API error: requires object value" -- Partial functions are icky and unhaskelly, but there's no better way
+--toDocument :: JSON.ToJSON value => value -> MDB.Document
+--toDocument = valueToDoc . JSON.toJSON
+--  where valueToDoc (JSON.Object v) = AB.bsonify v
+--        valueToDoc _ = error "DBAccess.dbStore API error: requires object value" -- Partial functions are icky and unhaskelly, but there's no better way
 
 -- Convert a MongoDB object to an arbitrary value
 -- It must implement the FromJSON typeclass
 -- This relies on a helper library for converting between Aeson's format and MongoDB's format for JSON
-fromDocument :: JSON.FromJSON value => MDB.Document -> JSON.Result value
-fromDocument doc = JSON.fromJSON $ JSON.Object (AB.aesonify doc)
+--fromDocument :: JSON.FromJSON value => MDB.Document -> JSON.Result value
+--fromDocument doc = JSON.fromJSON $ JSON.Object (AB.aesonify doc)
 
 -- Find a field in a MongoDB object, or error if not found
 docLookUp :: MDB.Val a => MDB.Document -> T.Text -> a
@@ -118,6 +149,9 @@ dbFindTakeN dbConn collection document num = dbFind dbConn $ allQuery { limit = 
 dbFindTakeNSortBy :: DBConnection -> T.Text -> MDB.Document -> Int -> T.Text -> IO [MDB.Document]
 dbFindTakeNSortBy dbConn collection document num sortField = dbFind dbConn $ allQuery { limit = fromIntegral num, sort = [ sortField =: (1::Int)] }
     where allQuery = MDB.select document collection
+
+dbEval :: DBConnection -> T.Text -> IO ()
+dbEval dbConn str = void $ (withDBDo dbConn $ MDB.eval $ MDB.Javascript [] str :: IO Bool)
 
 printMessages :: DBConnection -> IO ()
 printMessages dbConn = do
