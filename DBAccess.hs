@@ -7,9 +7,8 @@
 -- overloaded strings makes string literals passable as any string type (not just String).
 -- The amount of boilerplate this saves was deemed worth it.
 {-# LANGUAGE OverloadedStrings #-} 
-
--- Flexible instances allows us to detect types that are both FromJSON and ToJSON and make them DBStorable.
-{-# LANGUAGE FlexibleInstances, UndecidableInstances #-}
+-- FlexibleInstances + UndecidableInstances allows us to detect types that are both FromJSON and ToJSON and make them DBStorable.
+{-# LANGUAGE FlexibleInstances, UndecidableInstances, OverlappingInstances #-}
 
 module DBAccess (
     DBConnection
@@ -22,9 +21,12 @@ module DBAccess (
     , docLookUp
     , dbEval
     , dbStore
+    , dbStoreVal
     , dbUpdate
+    , dbUpdateVal
     , dbFind
     , dbFindOne
+    , dbFindVal
     , dbFindTakeN
     , dbFindTakeNSortBy
     , prependTimeStamp
@@ -52,8 +54,11 @@ import qualified System.IO.Pool as P
 import Control.Monad (liftM, void)
 
 class DBStorable a where
+   -- Convert an arbitrary value into a MongoDB object that we can store
    toDocument :: a -> Document
-   fromDocument :: Document -> Maybe a
+   -- Convert a MongoDB object to an arbitrary value
+   -- Throw exception if not possible
+   fromDocument :: Document -> a
 
 instance (JSON.ToJSON a, JSON.FromJSON a) => DBStorable a where
     toDocument = valueToDoc . JSON.toJSON
@@ -61,7 +66,7 @@ instance (JSON.ToJSON a, JSON.FromJSON a) => DBStorable a where
             valueToDoc _ = error "DBAccess.dbStore API error: requires object value" -- Partial functions are icky and unhaskelly, but there's no better way
     fromDocument doc = result2maybe $ JSON.fromJSON $ JSON.Object (AB.aesonify doc)
       where result2maybe (JSON.Error str) = Except.throw (Err.mkIOError Err.userErrorType str Nothing Nothing)
-            result2maybe (JSON.Success v) = Just v
+            result2maybe (JSON.Success v) = v
 
 type DBConnection = MDB.Pipe
 type DBConnectionPool = P.Pool Err.IOError DBConnection
@@ -90,25 +95,19 @@ withDBDo dbConn dbAction = do
     result <- MDB.access dbConn MDB.master "lanarts-lobby" dbAction
     throwOnDBFail result 
 
+unwrapObjectId :: MDB.Value -> MDB.ObjectId
+unwrapObjectId (ObjId objId) = objId
+unwrapObjectId _ = error "unwarpObjectId: failure" 
+
 -- Store a MongoDB object in the collection 'collection'
-dbStore :: DBConnection -> T.Text -> MDB.Document -> IO (MDB.Value)
-dbStore dbConn collection document = withDBDo dbConn $ MDB.insert collection document
+dbStore :: DBConnection -> T.Text -> MDB.Document -> IO MDB.ObjectId
+dbStore dbConn collection document = unwrapObjectId `fmap` (withDBDo dbConn $ MDB.insert collection document)
 
--- Convert an arbitrary value into a MongoDB object that we can store
--- It must implement the ToJSON typeclass
--- This relies on a helper library for converting Aeson's between format and MongoDB's format for JSON
---toDocument :: JSON.ToJSON value => value -> MDB.Document
---toDocument = valueToDoc . JSON.toJSON
---  where valueToDoc (JSON.Object v) = AB.bsonify v
---        valueToDoc _ = error "DBAccess.dbStore API error: requires object value" -- Partial functions are icky and unhaskelly, but there's no better way
+-- Store a DBStorable using dbStore
+dbStoreVal :: DBStorable a => DBConnection -> T.Text -> a -> IO MDB.ObjectId
+dbStoreVal dbConn collection = dbStore dbConn collection . toDocument
 
--- Convert a MongoDB object to an arbitrary value
--- It must implement the FromJSON typeclass
--- This relies on a helper library for converting between Aeson's format and MongoDB's format for JSON
---fromDocument :: JSON.FromJSON value => MDB.Document -> JSON.Result value
---fromDocument doc = JSON.fromJSON $ JSON.Object (AB.aesonify doc)
-
--- Find a field in a MongoDB object, or error if not found
+---- Find a field in a MongoDB object, or error if not found
 docLookUp :: MDB.Val a => MDB.Document -> T.Text -> a
 docLookUp document field = errIfNotExist $ MDB.lookup field document
   where errIfNotExist (Just a) = a
@@ -128,10 +127,20 @@ prependTimeStamp doc = do
 dbUpdate :: DBConnection -> T.Text -> MDB.Document -> IO () 
 dbUpdate dbConn collection document = withDBDo dbConn $ MDB.save collection document
 
+-- Update an object, it should convert to an object with an '_id' field.
+dbUpdateVal :: DBStorable a => DBConnection -> T.Text -> a -> IO () 
+dbUpdateVal dbConn collection = dbUpdate dbConn collection . toDocument
+
 -- Returns an instance from 'collection' matching the given partial object 'document'.
 -- Efficient if we know there is only one such object.
 dbFindOne :: DBConnection -> T.Text -> MDB.Document -> IO (Maybe MDB.Document)
 dbFindOne dbConn collection document = withDBDo dbConn $ MDB.findOne (MDB.select document collection)
+
+-- Like dbFindOne but converts storable type
+dbFindVal :: DBStorable a => DBConnection -> T.Text -> MDB.Document -> IO (Maybe a)
+dbFindVal dbConn collection document = do
+    doc <- dbFindOne dbConn collection document
+    return $ fromDocument `fmap` doc
 
 -- Returns all instances matching a given query.
 -- See http://hackage.haskell.org/packages/archive/mongoDB/1.3.2/doc/html/Database-MongoDB-Query.html#t:Query

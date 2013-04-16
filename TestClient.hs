@@ -19,37 +19,63 @@ import qualified Data.Aeson as JSON
 
 import Message
 import Configuration
+import Session
 
 quiet (Just a) = a
 quiet (Nothing) = undefined
 
 toURI = quiet . URI.parseURI
 
-message2request msg = HTTP.Request (toURI "http://lobby-lanarts.rhcloud.com/") HTTP.POST headers str 
+message2request msg = HTTP.Request (toURI "http://localhost:8080/") HTTP.POST headers str 
   where str = (BS.concat . BSL.toChunks) $ JSON.encode msg
         headers = [ HTTP.mkHeader HTTP.HdrContentLength (show (BS.length str)) ]
 
-handleMessage :: Maybe Message -> IO () 
-handleMessage (Just msg) = do
+sendMessage :: Message -> IO Message
+sendMessage msg = do
     let request = message2request msg
     result <- HTTP.simpleHTTP request
-    handleResult result
+    rsp2message result
   where 
-    handleResult (Left err) = putStrLn $ "ERROR OCCURRED"
-    handleResult (Right response) = putStrLn $ T.unpack $ T.decodeUtf8 $ HTTP.rspBody response
-handleMessage Nothing = putStrLn "Invalidly formatted message!"
+    rsp2message (Left err) = error $ "HTTP ERROR OCCURRED: " ++ (show err)
+    rsp2message (Right response) = do
+        let maybeMsg = JSON.decode $ BSL.fromChunks [HTTP.rspBody response]
+        case maybeMsg of 
+            Nothing -> error $ "INVALID JSON: " ++ (show $ HTTP.rspBody response)
+            Just msg -> return msg
 
-toMessage :: [String] -> Maybe Message
-toMessage ["create", u, p] = Just $ CreateUserMessage (T.pack u) (T.pack p)
-toMessage ["login", u, p] = Just $ LoginMessage (T.pack u) (T.pack p)
-toMessage ("send":u:rest) = Just $ ChatMessage (T.pack u) (T.pack $ unwords rest)
-toMessage _ = Nothing
+data ClientSession = ClientSession { csSession :: SessionId, csUsername :: T.Text } 
+
+handleMessage :: ClientSession -> [String] -> Maybe Message 
+handleMessage session ("send":rest) = Just $ ChatMessage { username = (csUsername session), sessId = (csSession session), message = (T.pack $ unwords rest)}  
+handleMessage session _ = Nothing
+
+handleAuthResponse :: T.Text -> Message -> IO (Maybe ClientSession)
+handleAuthResponse username (LoginSuccessMessage sessionId) = return $ Just $ ClientSession sessionId username
+handleAuthResponse _  msg = do 
+    print $ "Server sent message: " ++ (show msg )
+    return Nothing
+
+handleAuthMessage :: [String] -> IO (Maybe ClientSession)
+handleAuthMessage ["create", u, p] = handleAuthResponse (T.pack u) =<< sendMessage ( CreateUserMessage (T.pack u) (T.pack p) )
+handleAuthMessage ["login", u, p] = handleAuthResponse (T.pack u) =<< sendMessage ( LoginMessage (T.pack u) (T.pack p) )
+handleAuthMessage _ = return $ Nothing
+
+handleInputL :: ClientSession -> [[String]] -> IO ()
+handleInputL session messages = undefined
+
+handleInput :: [[String]] -> IO ()
+handleInput (msg:msgs) = do
+    maybeSession <- handleAuthMessage msg
+    case maybeSession of 
+        Just session -> handleInputL session msgs
+        Nothing -> handleInput msgs
+handleInput [] = return () 
 
 main :: IO ()
 main = do 
     stdIn <- getContents
-    let msgs = map (toMessage . words) (lines stdIn)
-    void $ sequence $ map handleMessage msgs
+    let msgs = map (words) (lines stdIn)
+    handleInput msgs
     where errHandler e
             | isEOFError e = return()
             | otherwise  = putStrLn (show e)

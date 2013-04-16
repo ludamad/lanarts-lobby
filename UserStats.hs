@@ -6,12 +6,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module UserStats (
-    User
-    , toDocument
-    , nullUser
-    , fromDocument
+    User(..)
     , dbAuthenticateUser
-    , dbUpdateUser
     , dbFindUser
     , dbCreateUser
     , dbPrintUsers
@@ -20,6 +16,7 @@ module UserStats (
 import qualified Data.Text as T
 import qualified Data.ByteString as BS
 import qualified DBAccess as DB
+import qualified Data.Time as Time
 
 import Database.MongoDB (Document, (=:), cast, Binary(..), ObjectId(..) )
 
@@ -29,18 +26,26 @@ data User = User {
     userId :: ObjectId
     , username :: T.Text
     , passwordHash :: SHA256Hash
+    , creationTime :: Time.UTCTime
 } deriving (Show, Eq)
+ 
+-- Convert to a MongoDB object. Includes everything except the ObjectId,
+-- because we must not pass an ObjectId on initial creation.
+toDocumentPartial :: User -> Document
+toDocumentPartial user = [ "username" =: username user, "passwordHash" =: Binary (passwordHash user), "creationTime" =: creationTime user ]
 
--- Represents an invalid user. We could use a Maybe type to represent this, but it would be tedious in the common case.
--- TODO: I'm not sure if this is required anymore
-nullUser :: User
-nullUser = User { userId = Oid 0 0, username = "", passwordHash = "" } 
+instance DB.DBStorable User where 
+    -- Convert to a MongoDB object. Includes ObjectId.
+    toDocument user = ("_id" =: userId user) : (toDocumentPartial user) 
+    -- Convert from a MongoDB object.
+    fromDocument doc = User (get "_id") (get "username") (DB.fromBinary $ get "passwordHash") (get "creationTime")
+      where get field = DB.docLookUp doc field
 
 -- Find a user with the given username
 dbFindUser :: DB.DBConnection -> T.Text -> IO (Maybe User)
 dbFindUser dbConn name = do
     maybeDoc <- DB.dbFindOne dbConn "users" [ "username" =: name ]
-    return $ fromDocument `fmap` maybeDoc
+    return $ DB.fromDocument `fmap` maybeDoc
 
 dbPrintUsers :: DB.DBConnection -> IO ()
 dbPrintUsers dbConn = do
@@ -53,33 +58,12 @@ dbAuthenticateUser dbConn name passHash = do
     maybeUser <- dbFindUser dbConn name
     return $ authenticate =<< maybeUser
   where authenticate user = if passwordHash user == passHash then Just user else Nothing
- 
--- Convert to a MongoDB object. Includes everything except the ObjectId,
--- because we must not pass an ObjectId on initial creation.
-toDocumentPartial :: User -> Document
-toDocumentPartial user = [ "username" =: username user, "passwordHash" =: Binary (passwordHash user) ]
-
--- Convert to a MongoDB object. Includes ObjectId.
-toDocument :: User -> Document
-toDocument user = ("_id" =: userId user) : (toDocumentPartial user) 
-
--- Convert from a MongoDB object.
-fromDocument :: Document -> User
-fromDocument document = User {
-    userId = document `DB.docLookUp` "_id"
-    , username = document `DB.docLookUp` "username"
-    , passwordHash = DB.fromBinary $ document `DB.docLookUp` "passwordHash"
-}
-
--- Update the user with the given ObjectId.
-dbUpdateUser :: DB.DBConnection -> User -> IO ()
-dbUpdateUser dbConn user = DB.dbUpdate dbConn "users" (toDocument user)
 
 -- Create a user, get assigned a ObjectId.
 -- Returns Nothing on failure.
 dbCreateUser :: DB.DBConnection -> T.Text -> SHA256Hash -> IO (Maybe User)
 dbCreateUser dbConn u p = do
-    let partialUser = User { userId = Oid 0 0, username = u, passwordHash = p }
-    doc <- DB.prependTimeStamp $ toDocumentPartial partialUser
-    _ <- DB.dbStore dbConn "users" doc
+    time <- Time.getCurrentTime
+    let partialUser = User { userId = Oid 0 0, username = u, passwordHash = p, creationTime = time }
+    _ <- DB.dbStore dbConn "users" (toDocumentPartial partialUser)
     dbAuthenticateUser dbConn u p
