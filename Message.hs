@@ -27,9 +27,9 @@ data Message =
             LoginMessage { username :: T.Text, password :: T.Text }
             | GuestLoginMessage { username :: T.Text } -- If username isn't taken, create login session with no credentials
             | CreateUserMessage { username :: T.Text, password :: T.Text }
-            | ChatMessage { username :: T.Text, sessId :: SessionId, message :: T.Text }
+            | ChatMessage { username :: T.Text, sessId :: T.Text, message :: T.Text }
 -- Server responses
-            | LoginSuccessMessage { sessId :: SessionId }
+            | LoginSuccessMessage { sessId :: T.Text }
             | ServerMessage { context :: T.Text, message :: T.Text } -- Primarily used for error messages
                 deriving (Show)
 

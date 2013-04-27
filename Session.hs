@@ -6,9 +6,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Session (
-    SessionId
-    , Session(..)
+    Session(..)
     , dbGetSession
+    , dbSessionIndexSetup
 ) where
 
 import qualified Data.Time as Time
@@ -16,14 +16,11 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.ByteString as BS
 
-import Numeric (readHex, showHex)
-
 import Database.MongoDB (Document, (=:), cast, Binary(..), ObjectId(..), Val(..) )
 
+import Control.Applicative ( (<$>) )
 import UserStats
 import qualified DBAccess as DB
-
-type SessionId = T.Text 
 
 -- A guest user does not have a corresponding user entry with their user name.
 data Session = Session {
@@ -32,26 +29,17 @@ data Session = Session {
     , sessionLastUpdate :: Time.UTCTime
 }
 
+toDocumentPartial (Session _ userName lastUpdate) = [ "userName" =: userName, "lastUpdate" =: lastUpdate ]
 instance DB.DBStorable Session where
-    toDocument (Session sessId userName lastUpdate) = [ "_id" =: sessionToObjId sessId, "userName" =: userName, "lastUpdate" =: lastUpdate ]
-    fromDocument doc = Session (objToSessionId $ get "_id") (get "userName") (get "lastUpdate")
+    toDocument session = ("_id" =: DB.textToObjId (sessionId session) ) : toDocumentPartial session
+    fromDocument doc = Session (DB.objIdToText $ get "_id") (get "userName") (get "lastUpdate")
       where get field = DB.docLookUp doc field
-
-sessionToObjId :: SessionId -> ObjectId
-sessionToObjId session = Oid (takeNum $ readHex start) (takeNum $ readHex end)
-  where str = show session
-        (start, end) = (take 2 str, drop 2 str)
-        takeNum [(num, _)] = num
-        takeNum _ = error $ "Session.hs: Invalid sessionToObjId string '" ++ str ++ "'!"
-
-objToSessionId :: ObjectId -> SessionId
-objToSessionId (Oid w32 w64) = T.pack (showHex w32 (showHex w64 "") ) 
 
 dbNewSession :: DB.DBConnection -> T.Text -> IO Session
 dbNewSession dbConn userName = do
-    timeStamp <- Time.getCurrentTime
-    sessId <- DB.dbStore dbConn "sessions" [ "userName" =: userName, "lastUpdate" =: timeStamp ]
-    return $ Session (objToSessionId sessId) userName timeStamp
+    session <- Session "" userName <$> Time.getCurrentTime
+    sessId <- DB.dbStore dbConn "sessions" (DB.toDocument session)
+    return $ session { sessionId = (DB.objIdToText sessId) }  
 
 dbGetSession :: DB.DBConnection -> T.Text -> IO Session
 dbGetSession dbConn userName = do
@@ -63,3 +51,8 @@ dbGetSession dbConn userName = do
             DB.dbUpdateVal dbConn "sessions" updatedSession
             return updatedSession
         Nothing -> dbNewSession dbConn userName
+
+dbSessionIndexSetup :: DB.DBConnection -> Int -> IO () 
+dbSessionIndexSetup dbConn timeOut = do
+    DB.dbSetIndexTimeOut dbConn "sessions" "lastUpdate" timeOut
+    DB.dbEnsureIndex dbConn "sessions" "userName"

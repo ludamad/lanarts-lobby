@@ -1,4 +1,4 @@
-{-# OPTIONS -Wall -fno-warn-missing-signatures -fno-warn-unused-imports #-}
+{-# OPTIONS -Wall -fno-warn-missing-signatures -fno-warn-unused-imports -fno-warn-name-shadowing #-}
 
 import System.IO.Error (isEOFError)
 
@@ -43,16 +43,20 @@ sendMessage msg = do
             Nothing -> error $ "INVALID JSON: " ++ (show $ HTTP.rspBody response)
             Just msg -> return msg
 
-data ClientSession = ClientSession { csSession :: SessionId, csUsername :: T.Text } 
+data ClientSession = ClientSession { csSession :: T.Text, csUsername :: T.Text } 
 
-handleMessage :: ClientSession -> [String] -> Maybe Message 
-handleMessage session ("send":rest) = Just $ ChatMessage { username = (csUsername session), sessId = (csSession session), message = (T.pack $ unwords rest)}  
-handleMessage session _ = Nothing
+handleMessage :: ClientSession -> [String] -> IO ()
+handleMessage session ("send":rest) = do
+    let msg = ChatMessage { username = (csUsername session), sessId = (csSession session), message = (T.pack $ unwords rest)}
+    void $ handleAuthResponse (username msg) =<< sendMessage msg
+handleMessage session msg = putStrLn $ "Unrecognized message format for message " ++ (unwords msg)
 
 handleAuthResponse :: T.Text -> Message -> IO (Maybe ClientSession)
-handleAuthResponse username (LoginSuccessMessage sessionId) = return $ Just $ ClientSession sessionId username
+handleAuthResponse username (LoginSuccessMessage sessionId) = do
+    putStrLn $ "Authorized with session = " ++ (show sessionId)
+    return $ Just $ ClientSession sessionId username
 handleAuthResponse _  msg = do 
-    print $ "Server sent message: " ++ (show msg )
+    putStrLn $ "Server sent message: " ++ (show msg )
     return Nothing
 
 handleAuthMessage :: [String] -> IO (Maybe ClientSession)
@@ -61,14 +65,19 @@ handleAuthMessage ["login", u, p] = handleAuthResponse (T.pack u) =<< sendMessag
 handleAuthMessage _ = return $ Nothing
 
 handleInputL :: ClientSession -> [[String]] -> IO ()
-handleInputL session messages = undefined
-
+handleInputL session (msg:msgs) = do
+    handleMessage session msg
+    handleInputL session msgs
+handleInputL session [] = return ()
+ 
 handleInput :: [[String]] -> IO ()
 handleInput (msg:msgs) = do
     maybeSession <- handleAuthMessage msg
     case maybeSession of 
         Just session -> handleInputL session msgs
-        Nothing -> handleInput msgs
+        Nothing -> do
+            putStrLn $ "Invalid login message '" ++ (unwords msg) ++  "'."
+            handleInput msgs
 handleInput [] = return () 
 
 main :: IO ()

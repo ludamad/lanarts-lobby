@@ -12,6 +12,8 @@
 
 module DBAccess (
     DBConnection
+    , textToObjId
+    , objIdToText
     , DBStorable 
     , DBConnectionPool
     , connectDB
@@ -21,6 +23,7 @@ module DBAccess (
     , docLookUp
     , dbEval
     , dbStore
+    , dbSetIndexTimeOut
     , dbStoreVal
     , dbUpdate
     , dbUpdateVal
@@ -29,6 +32,7 @@ module DBAccess (
     , dbFindVal
     , dbFindTakeN
     , dbFindTakeNSortBy
+    , dbEnsureIndex
     , prependTimeStamp
     , toDocument
     , fromDocument
@@ -38,6 +42,7 @@ module DBAccess (
 ) where
 
 import Database.MongoDB as MDB
+import Database.MongoDB.Admin as MDB
 
 import qualified Contrib.AesonBson as AB
 import qualified Data.Aeson as JSON
@@ -51,6 +56,7 @@ import qualified Control.Exception as Except
 import qualified System.IO.Error as Err
 import qualified System.IO.Pool as P
 
+import Numeric (readHex, showHex)
 import Control.Monad (liftM, void)
 
 class DBStorable a where
@@ -70,6 +76,16 @@ instance (JSON.ToJSON a, JSON.FromJSON a) => DBStorable a where
 
 type DBConnection = MDB.Pipe
 type DBConnectionPool = P.Pool Err.IOError DBConnection
+
+textToObjId :: T.Text -> MDB.ObjectId
+textToObjId text = MDB.Oid (takeNum $ readHex start) (takeNum $ readHex end)
+  where str = T.unpack text
+        (start, end) = (take 8 str, drop 8 str)
+        takeNum [(num, _)] = num
+        takeNum list = error $ "DBAccess.hs: Invalid textToObjId string '" ++ str ++ "'!" ++ (show list)
+
+objIdToText :: MDB.ObjectId -> T.Text
+objIdToText (Oid w32 w64) = T.pack (showHex w32 (showHex w64 "") )
 
 newDBConnectionPool :: String -> Int -> IO DBConnectionPool 
 newDBConnectionPool hostName amount = P.newPool connFactory amount
@@ -161,6 +177,15 @@ dbFindTakeNSortBy dbConn collection document num sortField = dbFind dbConn $ all
 
 dbEval :: DBConnection -> T.Text -> IO ()
 dbEval dbConn str = void $ (withDBDo dbConn $ MDB.eval $ MDB.Javascript [] str :: IO Bool)
+
+-- Ugly, but pragmatic implementation.
+-- Currently this is not directly supported by the MongoDB Haskell driver.
+dbSetIndexTimeOut :: DBConnection -> T.Text -> T.Text -> Int -> IO ()
+dbSetIndexTimeOut dbConn collection field timeOut = dbEval dbConn $ evalStr
+    where evalStr = T.concat [ "db.", collection, ".ensureIndex({ \"", field, "\": 1 }, { \"expireAfterSeconds\": ", T.pack (show timeOut)," } );" ]
+
+dbEnsureIndex :: DBConnection -> T.Text -> T.Text -> IO () 
+dbEnsureIndex dbConn collection field = withDBDo dbConn $ MDB.ensureIndex $ index collection [ field =: (1::Int)]
 
 printMessages :: DBConnection -> IO ()
 printMessages dbConn = do

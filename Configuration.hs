@@ -9,6 +9,7 @@ data Configuration = Configuration {
         , handleSigINT :: Bool
         , dbConnections :: Int
         , sessionTimeOut :: Int -- in seconds
+        , staleGameTimeOut :: Int -- in seconds
 }
 
 parseConfiguration :: [String] -> Configuration
@@ -22,4 +23,5 @@ parseConfiguration args = Configuration {
         , handleSigINT = False -- Should be true before deploying
         , dbConnections = 10
         , sessionTimeOut = 60*3 -- session is held for 3 minutes by default
+        , staleGameTimeOut = 20 -- in seconds
     }
