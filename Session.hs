@@ -38,7 +38,7 @@ instance DB.DBStorable Session where
 dbNewSession :: DB.DBConnection -> T.Text -> IO Session
 dbNewSession dbConn userName = do
     session <- Session "" userName <$> Time.getCurrentTime
-    sessId <- DB.dbStore dbConn "sessions" (DB.toDocument session)
+    sessId <- DB.dbStore dbConn "sessions" (toDocumentPartial session)
     return $ session { sessionId = (DB.objIdToText sessId) }  
 
 dbGetSession :: DB.DBConnection -> T.Text -> IO Session
