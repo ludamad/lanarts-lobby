@@ -99,9 +99,17 @@ handleCreateUser appState (username, password) = do
         else 
             loginSuccessMessage dbConn username
 
+handleCreateGame :: AppState -> (T.Text, T.Text) -> IO Message
+handleCreateGame appState (sessionId, ip) = do
+    dbConn <- getDBConn appState
+    session <- dbGetSessionByID dbConn sessionId
+    game <- dbNewGame dbConn (sessionUserName session) ip
+    return $ GameCreateSuccessMessage (gameId game)
+
 handleMessage :: AppState -> Message -> IO Message
 handleMessage appState (LoginMessage u p) = handleLogin appState (u, p)
 handleMessage appState (CreateUserMessage u p) = handleCreateUser appState (u, p)
+handleMessage appState (CreateGameMessage u s) = handleCreateGame appState (s, "127.0.0.1")
 handleMessage _ msg = return msg
 
 setUpDBIndices :: AppState -> IO ()

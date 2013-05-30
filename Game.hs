@@ -18,21 +18,21 @@ data Game = Game {
         gameId :: T.Text
         , gameHost :: T.Text
         , gameHostIp :: T.Text
-        , gamePlayers :: [T.Text] -- Includes host
+        , gamePlayers :: [T.Text] -- Includes hostPlayer
         , gameCreationTime :: Time.UTCTime
         , gameLastUpdate :: Time.UTCTime -- Used to determine if game entries should be kept alive. Hosts can ping server to keep game alive    
 }
 
-toDocumentPartial (Game _ host ip players creationTime lastUpdate) = [ "host" =: host, "ip" =: ip, "players" =: players, "creationTime" =: creationTime, "lastUpdate" =: lastUpdate ] 
+toDocumentPartial (Game _ hostPlayer ip players creationTime lastUpdate) = [ "hostPlayer" =: hostPlayer, "ip" =: ip, "players" =: players, "creationTime" =: creationTime, "lastUpdate" =: lastUpdate ] 
 instance DB.DBStorable Game where
     toDocument game = ("_id" =: DB.textToObjId (gameId game) ) : toDocumentPartial game
-    fromDocument doc = Game (DB.objIdToText $ get "_id") (get "host") (get "ip") (get "players") (get "creationTime") (get "lastUpdate")
+    fromDocument doc = Game (DB.objIdToText $ get "_id") (get "hostPlayer") (get "ip") (get "players") (get "creationTime") (get "lastUpdate")
       where get field = DB.docLookUp doc field
 
 dbNewGame :: DB.DBConnection -> T.Text -> T.Text -> IO Game
-dbNewGame dbConn host ip = do
+dbNewGame dbConn hostPlayer ip = do
     time <- Time.getCurrentTime
-    let game = (Game "" host ip [] time time)
+    let game = (Game "" hostPlayer ip [] time time)
     id <- DB.dbStore dbConn "games" (toDocumentPartial game)
     return $ game { gameId = DB.objIdToText id }
 
@@ -51,4 +51,4 @@ leaveGame game player = game {  gamePlayers = player:(gamePlayers game) }
 dbGameIndexSetup :: DB.DBConnection -> Int -> IO ()
 dbGameIndexSetup dbConn timeOut = do
     DB.dbSetIndexTimeOut dbConn "games" "lastUpdate" timeOut
-    DB.dbEnsureIndex dbConn "games" "host"
+    DB.dbEnsureIndex dbConn "games" "hostPlayer"

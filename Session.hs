@@ -8,6 +8,7 @@
 module Session (
     Session(..)
     , dbGetSession
+    , dbGetSessionByID
     , dbSessionIndexSetup
 ) where
 
@@ -15,6 +16,9 @@ import qualified Data.Time as Time
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.ByteString as BS
+
+import qualified Control.Exception as Except
+import qualified System.IO.Error as Err
 
 import Database.MongoDB (Document, (=:), cast, Binary(..), ObjectId(..), Val(..) )
 
@@ -51,6 +55,18 @@ dbGetSession dbConn userName = do
             DB.dbUpdateVal dbConn "sessions" updatedSession
             return updatedSession
         Nothing -> dbNewSession dbConn userName
+        
+dbGetSessionByID :: DB.DBConnection -> T.Text -> IO Session
+dbGetSessionByID dbConn sessionId = do
+    print $ "Session ID is:" ++ (T.unpack sessionId)
+    maybeSession <- DB.dbFindVal dbConn "sessions" [ "_id" =: DB.textToObjId sessionId ]
+    case maybeSession of 
+        Just session -> do 
+            timeStamp <- Time.getCurrentTime
+            let updatedSession = session { sessionLastUpdate = timeStamp }
+            DB.dbUpdateVal dbConn "sessions" updatedSession
+            return updatedSession
+        Nothing -> Except.throwIO $ Err.mkIOError Err.userErrorType "session does not exist" Nothing Nothing
 
 dbSessionIndexSetup :: DB.DBConnection -> Int -> IO () 
 dbSessionIndexSetup dbConn timeOut = do

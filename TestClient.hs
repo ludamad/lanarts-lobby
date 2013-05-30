@@ -49,6 +49,9 @@ handleMessage :: ClientSession -> [String] -> IO ()
 handleMessage session ("send":rest) = do
     let msg = ChatMessage { username = (csUsername session), sessId = (csSession session), message = (T.pack $ unwords rest)}
     void $ handleAuthResponse (username msg) =<< sendMessage msg
+handleMessage session ("game":rest) = do
+    let msg = CreateGameMessage { username = (csUsername session), sessId = (csSession session)}
+    void $ handleAuthResponse (username msg) =<< sendMessage msg
 handleMessage session msg = putStrLn $ "Unrecognized message format for message " ++ (unwords msg)
 
 handleAuthResponse :: T.Text -> Message -> IO (Maybe ClientSession)
