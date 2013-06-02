@@ -48,23 +48,29 @@ data ClientSession = ClientSession { csSession :: T.Text, csUsername :: T.Text }
 handleMessage :: ClientSession -> [String] -> IO ()
 handleMessage session ("send":rest) = do
     let msg = ChatMessage { username = (csUsername session), sessId = (csSession session), message = (T.pack $ unwords rest)}
-    void $ handleAuthResponse (username msg) =<< sendMessage msg
+    void $ handleServerResponse (username msg) =<< sendMessage msg
 handleMessage session ("game":rest) = do
     let msg = CreateGameMessage { username = (csUsername session), sessId = (csSession session)}
-    void $ handleAuthResponse (username msg) =<< sendMessage msg
+    void $ handleServerResponse (username msg) =<< sendMessage msg
+handleMessage session ("join":rest) = do
+    let msg = JoinGameMessage { username = (csUsername session), sessId = (csSession session), joinGameId = joinGameId}
+    print rest
+    void $ handleServerResponse (username msg) =<< sendMessage msg
+    where joinGameId = T.pack (head rest)
 handleMessage session msg = putStrLn $ "Unrecognized message format for message " ++ (unwords msg)
 
-handleAuthResponse :: T.Text -> Message -> IO (Maybe ClientSession)
-handleAuthResponse username (LoginSuccessMessage sessionId) = do
+
+handleServerResponse :: T.Text -> Message -> IO (Maybe ClientSession)
+handleServerResponse username (LoginSuccessMessage sessionId) = do
     putStrLn $ "Authorized with session = " ++ (show sessionId)
     return $ Just $ ClientSession sessionId username
-handleAuthResponse _  msg = do 
+handleServerResponse _  msg = do 
     putStrLn $ "Server sent message: " ++ (show msg )
     return Nothing
 
 handleAuthMessage :: [String] -> IO (Maybe ClientSession)
-handleAuthMessage ["create", u, p] = handleAuthResponse (T.pack u) =<< sendMessage ( CreateUserMessage (T.pack u) (T.pack p) )
-handleAuthMessage ["login", u, p] = handleAuthResponse (T.pack u) =<< sendMessage ( LoginMessage (T.pack u) (T.pack p) )
+handleAuthMessage ["create", u, p] = handleServerResponse (T.pack u) =<< sendMessage ( CreateUserMessage (T.pack u) (T.pack p) )
+handleAuthMessage ["login", u, p] = handleServerResponse (T.pack u) =<< sendMessage ( LoginMessage (T.pack u) (T.pack p) )
 handleAuthMessage _ = return $ Nothing
 
 handleInputL :: ClientSession -> [[String]] -> IO ()

@@ -105,11 +105,29 @@ handleCreateGame appState (sessionId, ip) = do
     session <- dbGetSessionByID dbConn sessionId
     game <- dbNewGame dbConn (sessionUserName session) ip
     return $ GameCreateSuccessMessage (gameId game)
+    
+-- TODO: authenticate session
+handleJoinGame :: AppState -> (T.Text, T.Text, T.Text) -> IO Message
+handleJoinGame appState (username, sessionId, gameId) = do
+    dbConn <- getDBConn appState
+    dbJoinGame dbConn gameId username
+    return $ ServerMessage "JoinSuccess" "You have joined."
+
+handleGameStatus :: AppState -> T.Text -> IO Message
+handleGameStatus appState gameId = do
+    dbConn <- getDBConn appState
+    maybeGame <- dbGetGame dbConn gameId
+    case maybeGame of
+        Just game -> return $ GameStatusSuccessMessage (GameStatus (gameHostIp game) (gameHost game) (gamePlayers game))
+        Nothing -> return $ ServerMessage "NoSuchGame" "The game requested does not exist."
+
 
 handleMessage :: AppState -> Message -> IO Message
 handleMessage appState (LoginMessage u p) = handleLogin appState (u, p)
 handleMessage appState (CreateUserMessage u p) = handleCreateUser appState (u, p)
 handleMessage appState (CreateGameMessage u s) = handleCreateGame appState (s, "127.0.0.1")
+handleMessage appState (JoinGameMessage u s gid) = handleJoinGame appState (u, s, gid)
+handleMessage appState (GameStatusRequestMessage gid) = handleGameStatus appState gid
 handleMessage _ msg = return msg
 
 setUpDBIndices :: AppState -> IO ()

@@ -9,7 +9,7 @@ module Game where
 
 import qualified Data.Time as Time
 
-import Database.MongoDB ( (=:) )
+import Database.MongoDB ( (=:), Document )
 
 import qualified DBAccess as DB
 import qualified Data.Text as T
@@ -39,14 +39,22 @@ dbNewGame dbConn hostPlayer ip = do
 dbGetGame :: DB.DBConnection -> T.Text -> IO (Maybe Game)
 dbGetGame dbConn gameId = DB.dbFindVal dbConn "games" [ "_id" =: DB.textToObjId gameId ]
 
-dbUpdateGame :: DB.DBConnection -> T.Text -> IO () 
+dbUpdateGame :: DB.DBConnection -> T.Text -> IO ()
 dbUpdateGame dbConn game = DB.dbUpdateVal dbConn "games" game
 
-joinGame :: Game -> T.Text -> Game 
-joinGame game player = game {  gamePlayers = player:(gamePlayers game) }
+dbModifyGame :: DB.DBConnection -> T.Text -> Document -> IO ()
+dbModifyGame dbConn gameId = DB.dbFindAndUpdateVal dbConn "games" [ "_id" =: DB.textToObjId gameId ]
 
-leaveGame :: Game -> T.Text -> Game 
-leaveGame game player = game {  gamePlayers = player:(gamePlayers game) }
+dbJoinGame :: DB.DBConnection -> T.Text -> T.Text -> IO ()
+dbJoinGame dbConn gameId player = do
+    dbModifyGame dbConn gameId ["$push" =: ["players" =: player]]
+    return ()
+
+dbLeaveGame :: DB.DBConnection -> Game -> T.Text -> IO Game
+dbLeaveGame dbConn game player = do
+    dbModifyGame dbConn (gameId game) ["$pullAll" =: ["players" =: player]]
+    return game { gamePlayers = newPlayers }
+  where newPlayers = filter (player /=) (gamePlayers game) 
 
 dbGameIndexSetup :: DB.DBConnection -> Int -> IO ()
 dbGameIndexSetup dbConn timeOut = do

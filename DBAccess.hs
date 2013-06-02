@@ -30,6 +30,7 @@ module DBAccess (
     , dbFind
     , dbFindOne
     , dbFindVal
+    , dbFindAndUpdateVal
     , dbFindTakeN
     , dbFindTakeNSortBy
     , dbEnsureIndex
@@ -157,6 +158,10 @@ dbFindVal :: DBStorable a => DBConnection -> T.Text -> MDB.Document -> IO (Maybe
 dbFindVal dbConn collection document = do
     doc <- dbFindOne dbConn collection document
     return $ fromDocument `fmap` doc
+
+-- Atomic find and update operation
+dbFindAndUpdateVal :: DBConnection -> T.Text -> MDB.Document -> MDB.Document -> IO ()
+dbFindAndUpdateVal dbConn collection document operation = withDBDo dbConn $ MDB.modify (MDB.select document collection) operation
 
 -- Returns all instances matching a given query.
 -- See http://hackage.haskell.org/packages/archive/mongoDB/1.3.2/doc/html/Database-MongoDB-Query.html#t:Query
