@@ -9,7 +9,7 @@ module Game where
 
 import qualified Data.Time as Time
 
-import Database.MongoDB ( (=:), Document )
+import Database.MongoDB ( (=:), Document, select )
 
 import qualified DBAccess as DB
 import qualified Data.Text as T
@@ -39,6 +39,10 @@ dbNewGame dbConn hostPlayer ip = do
 dbGetGame :: DB.DBConnection -> T.Text -> IO (Maybe Game)
 dbGetGame dbConn gameId = DB.dbFindVal dbConn "games" [ "_id" =: DB.textToObjId gameId ]
 
+dbGetAllGames :: DB.DBConnection -> IO [Game]
+dbGetAllGames dbConn = map DB.fromDocument `fmap` DB.dbFind dbConn (select [] "games" )
+
+
 dbUpdateGame :: DB.DBConnection -> T.Text -> IO ()
 dbUpdateGame dbConn game = DB.dbUpdateVal dbConn "games" game
 
@@ -58,5 +62,5 @@ dbLeaveGame dbConn game player = do
 
 dbGameIndexSetup :: DB.DBConnection -> Int -> IO ()
 dbGameIndexSetup dbConn timeOut = do
-    DB.dbSetIndexTimeOut dbConn "games" "lastUpdate" timeOut
+    --DB.dbSetIndexTimeOut dbConn "games" "lastUpdate" timeOut
     DB.dbEnsureIndex dbConn "games" "hostPlayer"

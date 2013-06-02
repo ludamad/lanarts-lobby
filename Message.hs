@@ -32,10 +32,12 @@ data Message =
             | JoinGameMessage { username :: T.Text, sessId :: T.Text, joinGameId :: T.Text }
             | ChatMessage { username :: T.Text, sessId :: T.Text, message :: T.Text }
             | GameStatusRequestMessage { gid :: T.Text }
+            | GameListRequestMessage
 -- Server responses
             | LoginSuccessMessage { sessId :: T.Text }
             | GameCreateSuccessMessage { newGameId :: T.Text }
             | GameStatusSuccessMessage { gameStatus :: GameStatus }
+            | GameListSuccessMessage { gameList :: [GameStatus]}
             | ServerMessage { context :: T.Text, message :: T.Text } -- Primarily used for error messages
                 deriving (Show)
 
@@ -51,10 +53,12 @@ instance JSON.FromJSON Message where
                 "JoinGameMessage" -> JoinGameMessage <$> jsObject .: "username" <*> jsObject .: "sessionId" <*> jsObject .: "gameId"
                 "ChatMessage" -> ChatMessage <$> jsObject .: "username" <*>  jsObject .: "sessionId" <*> jsObject .: "message"
                 "GameStatusRequestMessage" -> GameStatusRequestMessage <$> jsObject .: "gameId"
+                "GameListRequestMessage" -> return GameListRequestMessage
 -- Server responses
                 "LoginSuccessMessage" -> LoginSuccessMessage <$> jsObject .: "sessionId"
                 "GameCreateSuccessMessage" -> GameCreateSuccessMessage <$> jsObject .: "gameId"
                 "GameStatusSuccessMessage" -> GameStatusSuccessMessage <$> jsObject .: "gameStatus"
+                "GameListSuccessMessage" -> GameListSuccessMessage <$> jsObject .: "gameList"
                 "ServerMessage" -> ServerMessage <$> jsObject .: "context" <*> jsObject .: "message"
                 _ -> mzero -- Fail
     parseJSON _ = mzero -- Fail
@@ -68,10 +72,12 @@ instance JSON.ToJSON Message where
     toJSON (JoinGameMessage u s gid) = JSON.object ["type" .= ("JoinGameMessage" :: T.Text), "username" .= u, "sessionId" .= s, "gameId" .= gid]
     toJSON (ChatMessage u sid msg) = JSON.object ["type" .= ("ChatMessage" :: T.Text), "username" .= u, "sessionId" .= sid, "message" .= msg]
     toJSON (GameStatusRequestMessage gid) = JSON.object ["type" .= ("GameStatusRequestMessage" :: T.Text), "gameId" .= gid]
+    toJSON GameListRequestMessage = JSON.object ["type" .= ("GameListRequestMessage" :: T.Text)]
 -- Server responses
     toJSON (LoginSuccessMessage sid) = JSON.object ["type" .= ("LoginSuccessMessage" :: T.Text), "sessionId" .= sid]
     toJSON (GameCreateSuccessMessage gid) = JSON.object ["type" .= ("GameCreateSuccessMessage" :: T.Text), "gameId" .= gid]
-    toJSON (GameStatusSuccessMessage gstatus) = JSON.object [ "type" .= ("GameStatusSuccessMessage" :: T.Text), "gameStatus" .= (JSON.toJSON gstatus)]
+    toJSON (GameStatusSuccessMessage gstatus) = JSON.object [ "type" .= ("GameStatusSuccessMessage" :: T.Text), "gameStatus" .= JSON.toJSON gstatus]
+    toJSON (GameListSuccessMessage games) = JSON.object ["type" .= ("GameListSuccessMessage" :: T.Text), "gameList" .= map JSON.toJSON games]
     toJSON (ServerMessage cntxt msg) = JSON.object ["type" .= ("ServerMessage" :: T.Text), "context" .= cntxt, "message" .= msg]
 
 dbStoreMessage :: DB.DBConnection -> Message -> IO ()

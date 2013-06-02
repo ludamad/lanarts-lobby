@@ -26,7 +26,7 @@ quiet (Nothing) = undefined
 
 toURI = quiet . URI.parseURI
 
-message2request msg = HTTP.Request (toURI "http://localhost:8080/") HTTP.POST headers str 
+message2request msg = HTTP.Request (toURI "http://10.0.0.6:8080/") HTTP.POST headers str 
   where str = (BS.concat . BSL.toChunks) $ JSON.encode msg
         headers = [ HTTP.mkHeader HTTP.HdrContentLength (show (BS.length str)) ]
 
@@ -60,6 +60,9 @@ handleMessage session ("status":rest) = do
     let msg = GameStatusRequestMessage statusGameId
     void $ handleServerResponse (username msg) =<< sendMessage msg
   where statusGameId = T.pack (head rest)
+handleMessage session ("list":rest) = do
+    let msg = GameListRequestMessage
+    void $ handleServerResponse (username msg) =<< sendMessage msg
 handleMessage session msg = putStrLn $ "Unrecognized message format for message " ++ (unwords msg)
 
 

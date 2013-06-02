@@ -6,6 +6,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import Network (withSocketsDo)
+import Network.Socket (inet_ntoa, SockAddr(..), HostAddress)
+
 import qualified Network.Wai as Web
 import qualified Network.HTTP.Types as HTTP
 import qualified Network.Wai.Handler.Warp as Warp
@@ -48,7 +50,20 @@ data AppState = AppState {
 getDBConn :: AppState -> IO DB.DBConnection
 getDBConn = DB.getDBConnection . appConnPool
 
+--getIP :: SockAddr -> T.Text
+--getIP (SockAddrInet port ip) = 
+--    case maybeIndex of
+--    Just index -> B.take index ip
+--    Nothing -> undefined
+--  where maybeIndex = B.elemIndexEnd (toEnum $ fromEnum ':') ip
+
 -- For robustness, we should ignore certain signals
+
+getHostAddr :: SockAddr -> IO T.Text
+getHostAddr (SockAddrInet port ip) = fmap T.pack (inet_ntoa ip)
+--getHostAddr (SockAddrInet6 port flow ip6 scope) = fmap T.pack (inet6_ntoa ip6)
+getHostAddr _ = undefined
+
 installSignalHandlers :: Configuration -> IO ()
 installSignalHandlers conf = do
     ignoreSignal Posix.sigPIPE
@@ -59,10 +74,12 @@ application :: AppState ->  Web.Request -> ResourceT IO Web.Response
 application appState request = do
     parseResult <- Web.requestBody request $$ sinkParser (fmap JSON.fromJSON JSON.json)
     liftIO $ putStrLn $ "Request parse result: " ++ (show parseResult)
+    resolvedIP <- liftIO $ getHostAddr $ Web.remoteHost request
+    liftIO $ putStrLn $ "Remote Host Address: " ++ (show resolvedIP)
     case parseResult of
         JSON.Error str -> liftIO $ Except.throwIO (Err.mkIOError Err.userErrorType ("parseResult error in 'application': " ++ str) Nothing Nothing)
         JSON.Success message -> do
-            response <- liftIO $ handleMessage appState message
+            response <- liftIO $ handleMessage appState resolvedIP message
             return $ Web.responseLBS HTTP.status200 [("Content-Type", "application/json")] $ JSON.encode response
 
 loginSuccessMessage :: DB.DBConnection -> T.Text -> IO Message 
@@ -110,25 +127,38 @@ handleCreateGame appState (sessionId, ip) = do
 handleJoinGame :: AppState -> (T.Text, T.Text, T.Text) -> IO Message
 handleJoinGame appState (username, sessionId, gameId) = do
     dbConn <- getDBConn appState
+    maybeGame <- dbGetGame dbConn gameId
     dbJoinGame dbConn gameId username
-    return $ ServerMessage "JoinSuccess" "You have joined."
+    case maybeGame of
+        Just game -> return $ ServerMessage "JoinSuccess" "You have joined."
+        Nothing -> return $ ServerMessage "NoSuchGame" "The game requested does not exist."
+
+makeGameStatus :: Game -> GameStatus
+makeGameStatus game = GameStatus (gameHostIp game) (gameHost game) (gamePlayers game)
 
 handleGameStatus :: AppState -> T.Text -> IO Message
 handleGameStatus appState gameId = do
     dbConn <- getDBConn appState
     maybeGame <- dbGetGame dbConn gameId
     case maybeGame of
-        Just game -> return $ GameStatusSuccessMessage (GameStatus (gameHostIp game) (gameHost game) (gamePlayers game))
+        Just game -> return $ GameStatusSuccessMessage (makeGameStatus game)
         Nothing -> return $ ServerMessage "NoSuchGame" "The game requested does not exist."
 
+handleGameList :: AppState -> IO Message
+handleGameList appState = do
+    dbConn <- getDBConn appState
+    games <- dbGetAllGames dbConn
+    return $ GameListSuccessMessage (map makeGameStatus games)
 
-handleMessage :: AppState -> Message -> IO Message
-handleMessage appState (LoginMessage u p) = handleLogin appState (u, p)
-handleMessage appState (CreateUserMessage u p) = handleCreateUser appState (u, p)
-handleMessage appState (CreateGameMessage u s) = handleCreateGame appState (s, "127.0.0.1")
-handleMessage appState (JoinGameMessage u s gid) = handleJoinGame appState (u, s, gid)
-handleMessage appState (GameStatusRequestMessage gid) = handleGameStatus appState gid
-handleMessage _ msg = return msg
+
+handleMessage :: AppState -> T.Text -> Message -> IO Message
+handleMessage appState ip (LoginMessage u p) = handleLogin appState (u, p)
+handleMessage appState ip (CreateUserMessage u p) = handleCreateUser appState (u, p)
+handleMessage appState ip (CreateGameMessage u s) = handleCreateGame appState (s, ip)
+handleMessage appState ip (JoinGameMessage u s gid) = handleJoinGame appState (u, s, gid)
+handleMessage appState ip (GameStatusRequestMessage gid) = handleGameStatus appState gid
+handleMessage appState ip GameListRequestMessage = handleGameList appState
+handleMessage _ ip msg = return msg
 
 setUpDBIndices :: AppState -> IO ()
 setUpDBIndices appState = do
