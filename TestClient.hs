@@ -54,9 +54,12 @@ handleMessage session ("game":rest) = do
     void $ handleServerResponse (username msg) =<< sendMessage msg
 handleMessage session ("join":rest) = do
     let msg = JoinGameMessage { username = (csUsername session), sessId = (csSession session), joinGameId = joinGameId}
-    print rest
     void $ handleServerResponse (username msg) =<< sendMessage msg
-    where joinGameId = T.pack (head rest)
+  where joinGameId = T.pack (head rest)
+handleMessage session ("status":rest) = do
+    let msg = GameStatusRequestMessage statusGameId
+    void $ handleServerResponse (username msg) =<< sendMessage msg
+  where statusGameId = T.pack (head rest)
 handleMessage session msg = putStrLn $ "Unrecognized message format for message " ++ (unwords msg)
 
 
