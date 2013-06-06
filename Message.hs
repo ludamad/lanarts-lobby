@@ -9,10 +9,14 @@ module Message (
         Message(..)
         ,dbStoreMessage
         ,GameStatus(..)
+        ,utcToSeconds
     ) where
 
 -- Easy JSON conversion is supported by the Aeson library
 import Data.Aeson as JSON
+
+import Data.Time as Time
+import Data.Time.LocalTime ( timeOfDayToTime )
 
 import Control.Monad
 import Control.Applicative
@@ -80,16 +84,20 @@ instance JSON.ToJSON Message where
     toJSON (GameListSuccessMessage games) = JSON.object ["type" .= ("GameListSuccessMessage" :: T.Text), "gameList" .= map JSON.toJSON games]
     toJSON (ServerMessage cntxt msg) = JSON.object ["type" .= ("ServerMessage" :: T.Text), "context" .= cntxt, "message" .= msg]
 
+utcToSeconds :: Time.UTCTime -> Int
+utcToSeconds = sec . utcToLocalTime utc
+    where sec (LocalTime (ModifiedJulianDay day) tod) = fromIntegral $ day * 60 * 60 * 24 + (truncate $ timeOfDayToTime tod)
+
 dbStoreMessage :: DB.DBConnection -> Message -> IO ()
 dbStoreMessage dbConn msg = do
     doc <- DB.prependTimeStamp $ DB.toDocument msg
     void $ DB.dbStore dbConn "messages" doc
 
-data GameStatus = GameStatus { gameStatusId :: T.Text, gameStatusHostIP :: T.Text, gameStatusHostPlayer :: T.Text, gameStatusPlayerList :: [T.Text] }
+data GameStatus = GameStatus { gsId :: T.Text, gsHostIP :: T.Text, gsHostPlayer :: T.Text, gsPlayerList :: [T.Text], gsCreationTime :: Int }
     deriving (Show)
 
 instance JSON.ToJSON GameStatus where
-    toJSON (GameStatus id ip host players) = JSON.object ["id" .= id, "ip" .= ip, "host" .= host, "players" .= players]
+    toJSON (GameStatus id ip host players time) = JSON.object ["id" .= id, "ip" .= ip, "host" .= host, "players" .= players, "creationTime" .= time]
 
 instance JSON.FromJSON GameStatus where
-    parseJSON (JSON.Object jsObject) = GameStatus <$> jsObject .: "id" <*> jsObject .: "ip" <*> jsObject .: "host" <*> jsObject .: "players"
+    parseJSON (JSON.Object jsObject) = GameStatus <$> jsObject .: "id" <*> jsObject .: "ip" <*> jsObject .: "host" <*> jsObject .: "players" <*> jsObject .: "creationTime"

@@ -17,6 +17,9 @@ import qualified Control.Exception as Except
 import qualified System.Posix as Posix
 import qualified System.IO.Error as Err
 
+import Data.Time
+import Data.Time.LocalTime
+
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -134,7 +137,8 @@ handleJoinGame appState (username, sessionId, gameId) = do
         Nothing -> return $ ServerMessage "NoSuchGame" "The game requested does not exist."
 
 makeGameStatus :: Game -> GameStatus
-makeGameStatus game = GameStatus (gameId game) (gameHostIp game) (gameHost game) (gamePlayers game)
+makeGameStatus game = GameStatus (gameId game) (gameHostIp game) (gameHost game) (gamePlayers game) creationTime
+    where creationTime = utcToSeconds $ gameCreationTime game
 
 handleGameStatus :: AppState -> T.Text -> IO Message
 handleGameStatus appState gameId = do
@@ -142,7 +146,6 @@ handleGameStatus appState gameId = do
     maybeGame <- dbGetGame dbConn gameId
     case maybeGame of
         Just game -> return $ GameStatusSuccessMessage (makeGameStatus game)
-        Nothing -> return $ ServerMessage "NoSuchGame" "The game requested does not exist."
 
 handleGameList :: AppState -> IO Message
 handleGameList appState = do

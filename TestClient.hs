@@ -26,7 +26,7 @@ quiet (Nothing) = undefined
 
 toURI = quiet . URI.parseURI
 
-message2request msg = HTTP.Request (toURI "http://localhost:8080/") HTTP.POST headers str 
+message2request msg = HTTP.Request (toURI "http://putterson.homedns.org:8080") HTTP.POST headers str 
   where str = (BS.concat . BSL.toChunks) $ JSON.encode msg
         headers = [ HTTP.mkHeader HTTP.HdrContentLength (show (BS.length str)) ]
 
