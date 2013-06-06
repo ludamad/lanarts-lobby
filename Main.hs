@@ -134,7 +134,7 @@ handleJoinGame appState (username, sessionId, gameId) = do
         Nothing -> return $ ServerMessage "NoSuchGame" "The game requested does not exist."
 
 makeGameStatus :: Game -> GameStatus
-makeGameStatus game = GameStatus (gameHostIp game) (gameHost game) (gamePlayers game)
+makeGameStatus game = GameStatus (gameId game) (gameHostIp game) (gameHost game) (gamePlayers game)
 
 handleGameStatus :: AppState -> T.Text -> IO Message
 handleGameStatus appState gameId = do
@@ -149,7 +149,6 @@ handleGameList appState = do
     dbConn <- getDBConn appState
     games <- dbGetAllGames dbConn
     return $ GameListSuccessMessage (map makeGameStatus games)
-
 
 handleMessage :: AppState -> T.Text -> Message -> IO Message
 handleMessage appState ip (LoginMessage u p) = handleLogin appState (u, p)

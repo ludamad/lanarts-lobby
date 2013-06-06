@@ -85,11 +85,11 @@ dbStoreMessage dbConn msg = do
     doc <- DB.prependTimeStamp $ DB.toDocument msg
     void $ DB.dbStore dbConn "messages" doc
 
-data GameStatus = GameStatus { hostIP :: T.Text, hostPlayer :: T.Text, playerList :: [T.Text] }
+data GameStatus = GameStatus { gameStatusId :: T.Text, gameStatusHostIP :: T.Text, gameStatusHostPlayer :: T.Text, gameStatusPlayerList :: [T.Text] }
     deriving (Show)
 
 instance JSON.ToJSON GameStatus where
-    toJSON (GameStatus ip host players) = JSON.object ["ip" .= ip, "host" .= host, "players" .= players]
+    toJSON (GameStatus id ip host players) = JSON.object ["id" .= id, "ip" .= ip, "host" .= host, "players" .= players]
 
 instance JSON.FromJSON GameStatus where
-    parseJSON (JSON.Object jsObject) = GameStatus <$> jsObject .: "ip" <*> jsObject .: "host" <*> jsObject .: "players"
+    parseJSON (JSON.Object jsObject) = GameStatus <$> jsObject .: "id" <*> jsObject .: "ip" <*> jsObject .: "host" <*> jsObject .: "players"
