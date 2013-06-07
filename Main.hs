@@ -102,6 +102,8 @@ handleGuestLogin :: AppState -> T.Text -> IO Message
 handleGuestLogin appState username = do
     dbConn <- getDBConn appState
     maybeUser <- dbFindUser dbConn username
+    print "MAybe USer?"
+    print maybeUser
     case maybeUser of
         Just user -> return $ ServerMessage "GuestLoginFailure" "Sorry, the username you wish to use is registered."
         Nothing -> LoginSuccessMessage <$> (sessionId <$> dbGetSession dbConn username)
@@ -155,6 +157,7 @@ handleGameList appState = do
 
 handleMessage :: AppState -> T.Text -> Message -> IO Message
 handleMessage appState ip (LoginMessage u p) = handleLogin appState (u, p)
+handleMessage appState ip (GuestLoginMessage u) = handleGuestLogin appState u
 handleMessage appState ip (CreateUserMessage u p) = handleCreateUser appState (u, p)
 handleMessage appState ip (CreateGameMessage u s) = handleCreateGame appState (s, ip)
 handleMessage appState ip (JoinGameMessage u s gid) = handleJoinGame appState (u, s, gid)
