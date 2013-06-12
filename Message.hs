@@ -34,6 +34,7 @@ data Message =
             | CreateUserMessage { username :: T.Text, password :: T.Text }
             | CreateGameMessage { username :: T.Text, sessId :: T.Text }
             | JoinGameMessage { username :: T.Text, sessId :: T.Text, joinGameId :: T.Text }
+            | RemoveGameMessage { username :: T.Text, sessId :: T.Text, removeGameId :: T.Text }
             | ChatMessage { username :: T.Text, sessId :: T.Text, message :: T.Text }
             | GameStatusRequestMessage { gid :: T.Text }
             | GameListRequestMessage
@@ -55,6 +56,7 @@ instance JSON.FromJSON Message where
                 "CreateUserMessage" -> CreateUserMessage <$> jsObject .: "username" <*> jsObject .: "password"
                 "CreateGameMessage" -> CreateGameMessage <$> jsObject .: "username" <*> jsObject .: "sessionId"
                 "JoinGameMessage" -> JoinGameMessage <$> jsObject .: "username" <*> jsObject .: "sessionId" <*> jsObject .: "gameId"
+                "RemoveGameMessage" -> RemoveGameMessage <$> jsObject .: "username" <*> jsObject .: "sessionId" <*> jsObject .: "gameId"
                 "ChatMessage" -> ChatMessage <$> jsObject .: "username" <*>  jsObject .: "sessionId" <*> jsObject .: "message"
                 "GameStatusRequestMessage" -> GameStatusRequestMessage <$> jsObject .: "gameId"
                 "GameListRequestMessage" -> return GameListRequestMessage
@@ -74,6 +76,7 @@ instance JSON.ToJSON Message where
     toJSON (CreateUserMessage u p) = JSON.object ["type" .= ("CreateUserMessage" :: T.Text), "username" .= u, "password" .= p]
     toJSON (CreateGameMessage u s) = JSON.object ["type" .=  ("CreateGameMessage" :: T.Text), "username" .= u, "sessionId" .= s]
     toJSON (JoinGameMessage u s gid) = JSON.object ["type" .= ("JoinGameMessage" :: T.Text), "username" .= u, "sessionId" .= s, "gameId" .= gid]
+    toJSON (RemoveGameMessage u s gid) = JSON.object ["type" .= ("RemoveGameMessage" :: T.Text), "username" .= u, "sessionId" .= s, "gameId" .= gid]
     toJSON (ChatMessage u sid msg) = JSON.object ["type" .= ("ChatMessage" :: T.Text), "username" .= u, "sessionId" .= sid, "message" .= msg]
     toJSON (GameStatusRequestMessage gid) = JSON.object ["type" .= ("GameStatusRequestMessage" :: T.Text), "gameId" .= gid]
     toJSON GameListRequestMessage = JSON.object ["type" .= ("GameListRequestMessage" :: T.Text)]

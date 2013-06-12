@@ -53,6 +53,9 @@ dbJoinGame :: DB.DBConnection -> T.Text -> T.Text -> IO ()
 dbJoinGame dbConn gameId player = do
     dbModifyGame dbConn gameId ["$push" =: ["players" =: player]]
     return ()
+    
+dbRemoveGame :: DB.DBConnection -> T.Text -> IO ()
+dbRemoveGame dbConn gameId = DB.dbDelete dbConn "games" [ "_id" =: DB.textToObjId gameId ]
 
 dbLeaveGame :: DB.DBConnection -> Game -> T.Text -> IO Game
 dbLeaveGame dbConn game player = do

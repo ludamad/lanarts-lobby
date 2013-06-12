@@ -27,6 +27,7 @@ module DBAccess (
     , dbStoreVal
     , dbUpdate
     , dbUpdateVal
+    , dbDelete
     , dbFind
     , dbFindOne
     , dbFindVal
@@ -147,6 +148,10 @@ dbUpdate dbConn collection document = withDBDo dbConn $ MDB.save collection docu
 -- Update an object, it should convert to an object with an '_id' field.
 dbUpdateVal :: DBStorable a => DBConnection -> T.Text -> a -> IO () 
 dbUpdateVal dbConn collection = dbUpdate dbConn collection . toDocument
+
+-- Delete an object
+dbDelete :: DBConnection -> T.Text -> MDB.Document -> IO ()
+dbDelete dbConn collection document = withDBDo dbConn $ MDB.delete (MDB.select document collection)
 
 -- Returns an instance from 'collection' matching the given partial object 'document'.
 -- Efficient if we know there is only one such object.

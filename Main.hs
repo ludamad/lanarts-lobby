@@ -138,6 +138,13 @@ handleJoinGame appState (username, sessionId, gameId) = do
         Just game -> return $ ServerMessage "JoinSuccess" "You have joined."
         Nothing -> return $ ServerMessage "NoSuchGame" "The game requested does not exist."
 
+-- TODO: make sure username is hosting game and sessionId is valid
+handleRemoveGame :: AppState -> (T.Text, T.Text, T.Text) -> IO Message
+handleRemoveGame appState (username, sessionId, gameId) = do
+    dbConn <- getDBConn appState
+    dbRemoveGame dbConn gameId
+    return $ ServerMessage "RemoveSuccess" "Game does not exist now."
+        
 makeGameStatus :: Game -> GameStatus
 makeGameStatus game = GameStatus (gameId game) (gameHostIp game) (gameHost game) (gamePlayers game) creationTime
     where creationTime = utcToSeconds $ gameCreationTime game
@@ -161,6 +168,7 @@ handleMessage appState ip (GuestLoginMessage u) = handleGuestLogin appState u
 handleMessage appState ip (CreateUserMessage u p) = handleCreateUser appState (u, p)
 handleMessage appState ip (CreateGameMessage u s) = handleCreateGame appState (s, ip)
 handleMessage appState ip (JoinGameMessage u s gid) = handleJoinGame appState (u, s, gid)
+handleMessage appState ip (RemoveGameMessage u s gid) = handleRemoveGame appState (u, s, gid)
 handleMessage appState ip (GameStatusRequestMessage gid) = handleGameStatus appState gid
 handleMessage appState ip GameListRequestMessage = handleGameList appState
 handleMessage _ ip msg = return msg
