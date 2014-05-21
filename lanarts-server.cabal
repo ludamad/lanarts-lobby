@@ -1,0 +1,31 @@
+name: lanarts-server
+version: 0.0.1
+cabal-version: >=1.2
+build-type: Simple
+license: AllRightsReserved
+license-file: ""
+description:
+data-dir: ""
+
+executable lanarts-server
+    build-depends: QuickCheck -any,
+        base -any,
+        mongoDB -any, time -any,
+        cryptohash -any, transformers -any, resourcet -any,
+        conduit -any, conduit-extra -any, unix -any,
+        warp (==2.1.5.1),
+        wai (==2.1.0.2),
+        http-types -any, network -any, scientific -any,
+        aeson (==0.6.2.1),
+        attoparsec,
+        bson (>=0.2.1 && <3),
+        bytestring (>=0.10 && <0.13),
+        containers,
+        text (>=0.11.1.0),
+        unordered-containers (>=0.1.3.0),
+        streaming-commons (==0.1.2.4),
+        enumerator -any,
+        vector
+    main-is: Main.hs
+    buildable: True
+    hs-source-dirs: src

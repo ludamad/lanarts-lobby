@@ -2,6 +2,9 @@
 *.hi
 *.swp
 *.swo
+dist/
 build/
+*.lkshs
+*.lkshw
 Main
 TestClient

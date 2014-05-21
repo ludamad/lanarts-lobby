@@ -1,6 +1,6 @@
 {-# OPTIONS -Wall -fno-warn-missing-signatures -fno-warn-unused-imports -fno-warn-name-shadowing #-}
 
--- While generally I wanted to avoid language extensions, 
+-- While generally I wanted to avoid language extensions,
 -- overloaded strings makes string literals passable as any string type (not just String).
 -- The amount of boilerplate this saves was deemed worth it.
 {-# LANGUAGE OverloadedStrings #-}
@@ -27,11 +27,12 @@ import qualified Data.Text.Encoding as T
 import Data.Conduit.Attoparsec (sinkParser)
 
 import qualified Data.Conduit.List as CL
-import Data.Conduit (ResourceT, ($$), Sink)
+import Data.Conduit (($$), Sink)
+import qualified Data.Streaming.Network.Internal as Network
 
 import Control.Monad.Trans.Resource (ResourceT)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad (void) 
+import Control.Monad (void)
 import Control.Applicative
 
 import System.Environment (getArgs)
@@ -54,7 +55,7 @@ getDBConn :: AppState -> IO DB.DBConnection
 getDBConn = DB.getDBConnection . appConnPool
 
 --getIP :: SockAddr -> T.Text
---getIP (SockAddrInet port ip) = 
+--getIP (SockAddrInet port ip) =
 --    case maybeIndex of
 --    Just index -> B.take index ip
 --    Nothing -> undefined
@@ -73,19 +74,19 @@ installSignalHandlers conf = do
     if handleSigINT conf then ignoreSignal Posix.sigINT else return ()
   where ignoreSignal pipe = void $ Posix.installHandler pipe Posix.Ignore Nothing
 
-application :: AppState ->  Web.Request -> ResourceT IO Web.Response
+application :: AppState ->  Web.Request -> IO Web.Response
 application appState request = do
-    parseResult <- Web.requestBody request $$ sinkParser (fmap JSON.fromJSON JSON.json)
-    liftIO $ putStrLn $ "Request parse result: " ++ (show parseResult)
-    resolvedIP <- liftIO $ getHostAddr $ Web.remoteHost request
-    liftIO $ putStrLn $ "Remote Host Address: " ++ (show resolvedIP)
+    parseResult <- liftIO $ Web.requestBody request $$ sinkParser (fmap JSON.fromJSON JSON.json)
+    putStrLn $ "Request parse result: " ++ (show parseResult)
+    resolvedIP <- getHostAddr $ Web.remoteHost request
+    putStrLn $ "Remote Host Address: " ++ (show resolvedIP)
     case parseResult of
-        JSON.Error str -> liftIO $ Except.throwIO (Err.mkIOError Err.userErrorType ("parseResult error in 'application': " ++ str) Nothing Nothing)
+        JSON.Error str -> Except.throwIO (Err.mkIOError Err.userErrorType ("parseResult error in 'application': " ++ str) Nothing Nothing)
         JSON.Success message -> do
-            response <- liftIO $ handleMessage appState resolvedIP message
+            response <- handleMessage appState resolvedIP message
             return $ Web.responseLBS HTTP.status200 [("Content-Type", "application/json")] $ JSON.encode response
 
-loginSuccessMessage :: DB.DBConnection -> T.Text -> IO Message 
+loginSuccessMessage :: DB.DBConnection -> T.Text -> IO Message
 loginSuccessMessage dbConn username = do
     session <- dbGetSession dbConn username
     return $ LoginSuccessMessage (sessionId session)
@@ -111,14 +112,16 @@ handleGuestLogin appState username = do
 handleCreateUser :: AppState -> (T.Text, T.Text) -> IO Message
 handleCreateUser appState (username, password) = do
     dbConn <- getDBConn appState
-    maybeUserFind <- dbFindUser dbConn username 
-    if maybeUserFind /= Nothing then
+    maybeUserFind <- dbFindUser dbConn username
+    if maybeUserFind /= Nothing
+     then
         return $ ServerMessage "RegisterFailure" (T.concat ["Unable to create user account '", username, "' because it already exists."])
-    else do
+     else do
         maybeUser <- dbCreateUser dbConn username (SHA.hash $ T.encodeUtf8 password)
-        if maybeUser == Nothing then 
+        if maybeUser == Nothing
+         then
             return $ ServerMessage "RegisterFailure" (T.concat ["Unable to create user account '", username, "' due to unexpected database error."])
-        else 
+         else
             loginSuccessMessage dbConn username
 
 handleCreateGame :: AppState -> (T.Text, T.Text) -> IO Message
@@ -127,7 +130,7 @@ handleCreateGame appState (sessionId, ip) = do
     session <- dbGetSessionByID dbConn sessionId
     game <- dbNewGame dbConn (sessionUserName session) ip
     return $ GameCreateSuccessMessage (gameId game)
-    
+
 -- TODO: authenticate session
 handleJoinGame :: AppState -> (T.Text, T.Text, T.Text) -> IO Message
 handleJoinGame appState (username, sessionId, gameId) = do
@@ -144,7 +147,7 @@ handleRemoveGame appState (username, sessionId, gameId) = do
     dbConn <- getDBConn appState
     dbRemoveGame dbConn gameId
     return $ ServerMessage "RemoveSuccess" "Game does not exist now."
-        
+
 makeGameStatus :: Game -> GameStatus
 makeGameStatus game = GameStatus (gameId game) (gameHostIp game) (gameHost game) (gamePlayers game) creationTime
     where creationTime = utcToSeconds $ gameCreationTime game
@@ -175,19 +178,19 @@ handleMessage _ ip msg = return msg
 
 setUpDBIndices :: AppState -> IO ()
 setUpDBIndices appState = do
-    dbConn <- getDBConn appState 
+    dbConn <- getDBConn appState
     dbSessionIndexSetup dbConn (sessionTimeOut $ appConf appState)
     dbGameIndexSetup dbConn (staleGameTimeOut $ appConf appState)
 
 main :: IO ()
-main = withSocketsDo $ do 
+main = withSocketsDo $ do
     putStrLn $ "Welcome to LANARTS Lobby Server"
     conf <- fmap Configuration.parseConfiguration getArgs
     installSignalHandlers conf
     putStrLn $ "Connecting to database at " ++ (show (databaseIP conf))
-    dbConnPool <- DB.newDBConnectionPool (databaseIP conf) (dbConnections conf) 
+    dbConnPool <- DB.newDBConnectionPool (databaseIP conf) (dbConnections conf)
     let appState = AppState conf dbConnPool
-    let warpSettings = Warp.defaultSettings { Warp.settingsPort = serverPort conf, Warp.settingsHost = Warp.Host $ serverHostAddr conf }
+    let warpSettings = Warp.defaultSettings { Warp.settingsPort = serverPort conf, Warp.settingsHost = Network.Host $ serverHostAddr conf }
     setUpDBIndices appState
     putStrLn $ "Connected to database"
     Warp.runSettings warpSettings (application appState)

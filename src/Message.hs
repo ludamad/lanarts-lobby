@@ -1,6 +1,6 @@
 {-# OPTIONS -Wall -fno-warn-missing-signatures #-}
 
--- While generally I wanted to avoid language extensions, 
+-- While generally I wanted to avoid language extensions,
 -- overloaded strings makes string literals passable as any string type (not just String).
 -- The amount of boilerplate this saves was deemed worth it.
 {-# LANGUAGE OverloadedStrings #-}
@@ -47,7 +47,7 @@ data Message =
                 deriving (Show)
 
 instance JSON.FromJSON Message where
-    parseJSON (JSON.Object jsObject) = do 
+    parseJSON (JSON.Object jsObject) = do
         msgType <- jsObject .: "type"
         case msgType :: T.Text of
 -- User requests
